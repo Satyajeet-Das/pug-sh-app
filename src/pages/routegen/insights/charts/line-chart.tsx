@@ -7,7 +7,14 @@ import { YAxis } from '@/components/charts/y-axis'
 import type { SeriesColor } from '@/lib/event-colors'
 import { compactNumber } from '@/lib/format'
 import { cn } from '@/lib/utils'
-import { CHART_MARGIN, type ChartComparison, COMPARE_KEY, SERIES_CURVE, useVendoredChartPrep } from './common'
+import {
+  CHART_MARGIN,
+  type ChartComparison,
+  COMPARE_KEY,
+  SERIES_CURVE,
+  useRevealGate,
+  useVendoredChartPrep,
+} from './common'
 import { CompareLine } from './compare-series'
 import { ChartTooltip, DateLabelProvider, PILL_SCALING, XAxis } from './date-labels'
 import type { ChartPoint } from './types'
@@ -42,6 +49,7 @@ export const LineChart = memo(function LineChart({
     timeZone,
     comparison,
   )
+  const { revealed, onPhaseChange } = useRevealGate()
 
   if (data.length === 0) return null
 
@@ -52,9 +60,10 @@ export const LineChart = memo(function LineChart({
     <DateLabelProvider value={dateLabelFormatters}>
       <VendoredLineChart
         aspectRatio="auto"
-        className={cn(PILL_SCALING, className)}
+        className={cn(PILL_SCALING, className, !revealed && 'invisible')}
         data={chartData}
         margin={CHART_MARGIN}
+        onPhaseChange={onPhaseChange}
       >
         <Grid horizontal />
         <XAxis />
