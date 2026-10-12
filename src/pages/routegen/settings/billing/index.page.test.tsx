@@ -587,15 +587,25 @@ describe('the plan catalog', () => {
     expect(screen.queryByText('Change plan in the billing portal')).toBeNull()
   })
 
-  // Spending money is admin-only on the server too.
-  it('is hidden from a role that cannot start a checkout', async () => {
+  // The server lists plans to every role that reads billing, and starts a checkout for an admin only.
+  it('shows a role that cannot start a checkout what is on sale, with no way to buy', async () => {
     getBillingStatus.mockResolvedValue(status({ purchasable: true }))
     listPlans.mockResolvedValue({ plans: [usagePlan()] })
     renderPage(OrgRole.MEMBER)
 
-    await screen.findByText('Free')
-    expect(screen.queryByText('Pay as you go')).toBeNull()
-    expect(listPlans).not.toHaveBeenCalled()
+    await screen.findByText('Pay as you go')
+    expect(screen.queryByRole('button', { name: /^Subscribe to/ })).toBeNull()
+    expect(screen.getByText(/Only an admin can subscribe\.$/)).toBeTruthy()
+  })
+
+  it('points a subscribed role that cannot open the portal at an admin', async () => {
+    getBillingStatus.mockResolvedValue(subscribed({ purchasable: true }))
+    listPlans.mockResolvedValue({ plans: [usagePlan(), deal()] })
+    renderPage(OrgRole.MEMBER)
+
+    await screen.findByText('Acme Enterprise')
+    expect(screen.getByText('An admin can change or cancel the plan in the billing portal.')).toBeTruthy()
+    expect(screen.queryByText('Change plan in the billing portal')).toBeNull()
   })
 })
 
