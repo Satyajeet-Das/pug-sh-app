@@ -3,12 +3,16 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { UsageDay } from '@/api/genproto/dashboard/usage/v1/usage_pb'
 import { inZone, inZoneAsync } from '@/test/timezone'
 import {
+  BILLING_PERIOD,
+  billingPeriodDays,
   buildUsageSeries,
   DAY_MS,
+  DEFAULT_RANGE_DAYS,
   formatPeriod,
   lastNUtcDays,
   OTHERS_LABEL,
   RANGE_OPTIONS,
+  resolveUsageWindow,
   unmeteredTailDays,
 } from './usage-helpers'
 
@@ -98,6 +102,63 @@ describe('unmeteredTailDays', () => {
   it('is zero when the meter has never run', () => {
     expect(unmeteredTailDays(window(), null)).toBe(0)
   })
+
+  it("stops at today, so a billing period's days not yet reached are not called unmetered", () => {
+    const period = range('2026-08-01T00:00:00Z', '2026-09-01T00:00:00Z')
+    const now = new Date('2026-08-10T12:00:00Z')
+    expect(unmeteredTailDays(period, new Date('2026-08-10T06:00:00Z'), now)).toBe(0)
+    // Last ran on the 8th: the 9th and today are unmetered, the 21 days after today are not.
+    expect(unmeteredTailDays(period, new Date('2026-08-08T06:00:00Z'), now)).toBe(2)
+  })
+
+  it('counts only the days the chart shows when the meter stopped before the window began', () => {
+    expect(unmeteredTailDays(window(), new Date('2026-07-20T06:00:00Z'), new Date('2026-08-10T12:00:00Z'))).toBe(10)
+  })
+})
+
+describe('billingPeriodDays', () => {
+  const ms = (iso: string) => new Date(iso).getTime()
+
+  it('covers whole UTC days and leaves the renewal day to the next period', () => {
+    const period = billingPeriodDays(ms('2026-10-08T09:30:00Z'), ms('2026-11-08T09:30:00Z'))
+    expect(period?.from.toISOString()).toBe('2026-10-08T00:00:00.000Z')
+    expect(period?.to.toISOString()).toBe('2026-11-08T00:00:00.000Z')
+  })
+
+  // 02:00 UTC is still the previous evening in Los Angeles, so local day parts would start a day early.
+  it('floors on the UTC day west of UTC', () => {
+    inZone(WESTERN, () => {
+      const period = billingPeriodDays(ms('2026-10-08T02:00:00Z'), ms('2026-11-08T02:00:00Z'))
+      expect(period?.from.toISOString()).toBe('2026-10-08T00:00:00.000Z')
+      expect(period?.to.toISOString()).toBe('2026-11-08T00:00:00.000Z')
+    })
+  })
+
+  it('is null without both ends', () => {
+    expect(billingPeriodDays(undefined, ms('2026-11-08T09:30:00Z'))).toBeNull()
+    expect(billingPeriodDays(ms('2026-10-08T09:30:00Z'), undefined)).toBeNull()
+  })
+
+  it('is null for a period with no whole day in it', () => {
+    expect(billingPeriodDays(ms('2026-10-08T09:30:00Z'), ms('2026-10-08T20:00:00Z'))).toBeNull()
+  })
+
+  it("is null past the request's 400-day cap, which no window could load", () => {
+    expect(billingPeriodDays(ms('2026-10-08T09:30:00Z'), ms('2027-11-20T09:30:00Z'))).toBeNull()
+  })
+})
+
+describe('resolveUsageWindow', () => {
+  const period = range('2026-10-08T00:00:00Z', '2026-11-08T00:00:00Z')
+
+  it('follows the billing period until another range is picked', () => {
+    expect(resolveUsageWindow(BILLING_PERIOD, period)).toEqual({ key: BILLING_PERIOD, range: period })
+    expect(resolveUsageWindow(90, period).key).toBe(90)
+  })
+
+  it('falls back to the default without a billing period', () => {
+    expect(resolveUsageWindow(BILLING_PERIOD, null).key).toBe(DEFAULT_RANGE_DAYS)
+  })
 })
 
 describe('buildUsageSeries', () => {
@@ -117,6 +178,17 @@ describe('buildUsageSeries', () => {
     // Summed across days, not overwritten by the last one.
     expect(series.projectTotals[0].total).toBe(15)
     expect(series.windowTotal).toBe(15)
+  })
+
+  it('marks the days after today pending rather than zero', () => {
+    const series = buildUsageSeries(
+      [cell('2026-08-01T00:00:00Z', 'a', 10)],
+      range('2026-08-01T00:00:00Z', '2026-08-05T00:00:00Z'),
+      named,
+      new Date('2026-08-02T12:00:00Z'),
+    )
+
+    expect(series.points.map(p => !!p.pending)).toEqual([false, false, true, true])
   })
 
   it('ignores cells outside the range so totals match the points', () => {

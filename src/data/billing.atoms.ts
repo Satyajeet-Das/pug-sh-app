@@ -26,7 +26,7 @@ type BillingResult = {
 const MAX_AGE_MS = 60_000
 
 const billingResultAtom = atom<BillingResult | null>(null)
-const inFlightAtom = atom<{ id: number; orgId: string; promise: Promise<void> } | null>(null)
+const inFlightAtom = atom<{ id: number; orgId: string; promise: Promise<void>; next?: Promise<void> } | null>(null)
 let requestId = 0
 
 const EMPTY = { status: null, usedEvents: null, meterError: false, error: null, unsupported: false, loaded: false }
@@ -119,7 +119,13 @@ const runLoad = (get: Getter, set: Setter, force: boolean): Promise<void> => {
   const inFlight = get(inFlightAtom)
   // Re-entered rather than chaining a startLoad holding the org read above: the org can move while
   // the first request is out.
-  if (inFlight?.orgId === org.id) return force ? inFlight.promise.then(() => runLoad(get, set, true)) : inFlight.promise
+  if (inFlight?.orgId === org.id) {
+    if (!force) return inFlight.promise
+    // One queued reload serves every forced caller: it starts after all of them.
+    const next = inFlight.next ?? inFlight.promise.then(() => runLoad(get, set, true))
+    set(inFlightAtom, { ...inFlight, next })
+    return next
+  }
 
   // A cached failure must not stop the next retry, unless the answer cannot change.
   const cached = get(billingResultAtom)

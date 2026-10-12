@@ -4,9 +4,11 @@ import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { createStore, Provider } from 'jotai'
 import type { ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { GetBillingStatusResponseSchema } from '@/api/genproto/dashboard/billing/v1/billing_pb'
 import { OrgSchema } from '@/api/genproto/dashboard/orgs/v1/orgs_pb'
 import { ProjectSchema } from '@/api/genproto/dashboard/projects/v1/projects_pb'
 import { GetUsageResponseSchema, type UsageDay } from '@/api/genproto/dashboard/usage/v1/usage_pb'
+import type { useBilling } from '@/hooks/use-billing'
 
 // The page's async behaviour is the point of this file, so the call is hand-held: a deferred
 // promise per request lets a test settle them out of order, which is the only way to land a
@@ -18,6 +20,13 @@ vi.mock('@/api/rpc', async () => {
   return { usageRPCAtom: atom({ getUsage }) }
 })
 
+// The real hook calls getUsage too, eating the hand-held responses above. Defaults to settled, no period.
+const { billing } = vi.hoisted(() => ({
+  billing: { current: { loaded: true, status: null } as Pick<ReturnType<typeof useBilling>, 'loaded' | 'status'> },
+}))
+
+vi.mock('@/hooks/use-billing', () => ({ useBilling: () => billing.current }))
+
 vi.mock('@/analytics/pug', () => ({
   trackEvent: vi.fn(),
   trackFeature: vi.fn(),
@@ -27,10 +36,7 @@ vi.mock('@/analytics/pug', () => ({
   analyticsEnabled: false,
 }))
 
-// happy-dom reports the chart container as 0x0, and the chart renders nothing at that size. No
-// assertion here reads the chart — they read the caption, the banners and the period figure, all
-// siblings of it — but giving it a size keeps this file exercising the real render path rather
-// than a subtree that silently no-ops.
+// happy-dom reports the chart container as 0x0, and the chart renders nothing at that size.
 vi.mock('@visx/responsive', () => ({
   ParentSize: ({ children }: { children: (size: { width: number; height: number }) => ReactNode }) =>
     children({ width: 800, height: 400 }),
@@ -72,14 +78,8 @@ const mount = ({ projectsCommitted = true } = {}) => {
   store.set(activeOrgAtom, org)
   if (projectsCommitted) store.set(commitProjectsAtom, { orgId: org.id, projects })
   else store.set(projectsAtom, projects)
-  return {
-    ...render(
-      <Provider store={store}>
-        <Usage />
-      </Provider>,
-    ),
-    store,
-  }
+  const wrapper = ({ children }: { children: ReactNode }) => <Provider store={store}>{children}</Provider>
+  return { ...render(<Usage />, { wrapper }), store }
 }
 
 // The chip is a popover: open it, then pick the option by its label.
@@ -99,8 +99,7 @@ const caption = () =>
 
 const daysAgo = (n: number) => new Date(Date.now() - n * 24 * 60 * 60 * 1000)
 
-// Recent enough to fall inside even the shortest preset (30 days), so a cell is always in the
-// window whichever range a test picks. Dating it further back would drop it out, not keep it in.
+// Inside every window a test asks for, the shortest being a billing period begun five days ago.
 const recent = () => daysAgo(2).toISOString()
 
 // Lets a superseded promise's continuation run before the assertions. waitFor is not enough on its
@@ -116,12 +115,14 @@ const flush = async (p: Promise<unknown>) => {
 beforeEach(() => {
   // restoreMocks does not clear call history, and the request-id assertions count calls.
   getUsage.mockReset()
+  billing.current = { loaded: true, status: null }
 })
 
 // The series palette is module-level state, so a test that flips it has to put it back or every
 // later file in the run inherits dark colours.
 afterEach(() => {
   setSeriesPalette(pugPalette('light'))
+  vi.useRealTimers()
 })
 
 describe('Usage page — superseded requests', () => {
@@ -312,6 +313,150 @@ describe('Usage page — the window on screen', () => {
   })
 })
 
+describe('Usage page — billing period', () => {
+  type Req = { range: { from: { seconds: bigint }; to: { seconds: bigint } } }
+
+  const subscribe = (startDaysAgo = 5) => {
+    const start = daysAgo(startDaysAgo)
+    start.setUTCHours(9, 30, 0, 0)
+    const end = new Date(start)
+    end.setUTCMonth(end.getUTCMonth() + 1)
+    billing.current = {
+      loaded: true,
+      status: create(GetBillingStatusResponseSchema, {
+        currentPeriodStart: timestampFromDate(start),
+        currentPeriodEnd: timestampFromDate(end),
+      }),
+    }
+    const utcDay = (d: Date) => Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) / 1000
+    return { from: BigInt(utcDay(start)), to: BigInt(utcDay(end)), days: (utcDay(end) - utcDay(start)) / 86_400 }
+  }
+
+  it("defaults a subscriber's chart to the whole billing period, days not yet reached included", async () => {
+    const period = subscribe()
+    getUsage.mockResolvedValueOnce(
+      usage([day(recent(), 'p1', 10)], {
+        counted: true,
+        usedEvents: 10n,
+        usageComputedAt: timestampFromDate(new Date()),
+      }),
+    )
+
+    const { container } = mount()
+    await screen.findByText(/10 events so far this billing period/)
+
+    const req: Req = getUsage.mock.calls[0][0]
+    expect([req.range.from.seconds, req.range.to.seconds]).toEqual([period.from, period.to])
+    expect(rangeChip()).toContain('Billing period')
+    expect(container.querySelectorAll('g.series-bar rect')).toHaveLength(period.days)
+    expect(screen.queryByText(/unmetered/)).toBeNull()
+  })
+
+  it('waits for billing before the first request, so a cold load asks once', async () => {
+    billing.current = { loaded: false, status: null }
+    getUsage.mockResolvedValue(usage([day(recent(), 'p1', 10)]))
+
+    const { rerender } = mount()
+    await act(async () => {})
+    expect(getUsage).not.toHaveBeenCalled()
+
+    const period = subscribe()
+    rerender(<Usage />)
+    await screen.findByText(/10 events so far this billing period/)
+    expect(getUsage).toHaveBeenCalledTimes(1)
+    expect((getUsage.mock.calls[0][0] as Req).range.from.seconds).toBe(period.from)
+  })
+
+  it('stops waiting on a stalled billing call', async () => {
+    vi.useFakeTimers({ shouldAdvanceTime: true })
+    billing.current = { loaded: false, status: null }
+    getUsage.mockResolvedValue(usage([day(recent(), 'p1', 10)]))
+
+    mount()
+    await act(async () => {
+      vi.advanceTimersByTime(5_000)
+    })
+
+    await screen.findByText(/10 events over the last 30 days/)
+  })
+
+  it('reports a missing org rather than waiting on billing', async () => {
+    billing.current = { loaded: false, status: null }
+
+    render(
+      <Provider store={createStore()}>
+        <Usage />
+      </Provider>,
+    )
+
+    await screen.findByText('No organization selected')
+  })
+
+  it('falls back to the rolling default once the period has ended', async () => {
+    subscribe(40)
+    getUsage.mockResolvedValue(usage([day(recent(), 'p1', 10)]))
+
+    mount()
+
+    await screen.findByText(/10 events over the last 30 days/)
+    fireEvent.click(screen.getByText('range'))
+    expect(screen.queryByText('Billing period')).toBeNull()
+  })
+
+  it('calls the period unmetered, not empty, when the meter has not run since it began', async () => {
+    subscribe()
+    getUsage.mockResolvedValue(usage([], { counted: true, usageComputedAt: timestampFromDate(daysAgo(8)) }))
+
+    mount()
+
+    await screen.findByText(/the 6 days through today are unmetered — not zero/)
+    expect(screen.queryByText(/stored as no row at all/)).toBeNull()
+  })
+
+  it('keeps naming the billing period while a refetch replaces it', async () => {
+    subscribe()
+    getUsage.mockResolvedValueOnce(usage([day(recent(), 'p1', 10)])).mockReturnValueOnce(new Promise(() => {}))
+
+    const { rerender } = mount()
+    await screen.findByText(/10 events so far this billing period/)
+    billing.current = { loaded: true, status: null }
+    rerender(<Usage />)
+
+    await waitFor(() => expect(getUsage).toHaveBeenCalledTimes(2))
+    expect(rangeChip()).toContain('Billing period')
+  })
+
+  it('does not refetch when billing reloads the same period', async () => {
+    subscribe()
+    getUsage.mockResolvedValue(usage([day(recent(), 'p1', 10)]))
+
+    const { rerender } = mount()
+    await screen.findByText(/10 events so far this billing period/)
+    const { status } = billing.current
+    billing.current = {
+      loaded: true,
+      status: create(GetBillingStatusResponseSchema, {
+        currentPeriodStart: status?.currentPeriodStart,
+        currentPeriodEnd: status?.currentPeriodEnd,
+      }),
+    }
+    rerender(<Usage />)
+    await act(async () => {})
+
+    expect(getUsage).toHaveBeenCalledTimes(1)
+  })
+
+  it('still offers the rolling ranges', async () => {
+    subscribe()
+    getUsage.mockResolvedValue(usage([day(recent(), 'p1', 10)]))
+
+    mount()
+    await screen.findByText(/10 events so far this billing period/)
+    pickRange('90 days')
+    await screen.findByText(/10 events over the last 90 days/)
+  })
+})
+
 describe('Usage page — refusing to assert a zero', () => {
   it('reports unreadable rows instead of claiming there were no events', async () => {
     getUsage.mockResolvedValueOnce(usage([{ day: undefined, projectId: 'p1', eventCount: 900n } as UsageDay]))
@@ -447,7 +592,7 @@ describe('Usage page — refusing to assert a zero', () => {
 
     mount()
 
-    await screen.findByText(/unmetered — not zero/)
+    await screen.findByText(/the 7 days through today are unmetered — not zero/)
   })
 
   // protobuf-es returns a truthy Invalid Date for an out-of-range int64 rather than throwing, and

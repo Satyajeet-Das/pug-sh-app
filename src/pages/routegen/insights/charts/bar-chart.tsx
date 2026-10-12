@@ -7,7 +7,7 @@ import { YAxis } from '@/components/charts/y-axis'
 import type { SeriesColor } from '@/lib/event-colors'
 import { compactNumber } from '@/lib/format'
 import { cn } from '@/lib/utils'
-import { CHART_MARGIN, PAD_ROW_KEY, useVendoredChartPrep } from './common'
+import { CHART_MARGIN, PAD_ROW_KEY, useRevealGate, useVendoredChartPrep } from './common'
 import { ChartTooltip, DateLabelProvider, PILL_SCALING, XAxis } from './date-labels'
 import type { ChartPoint } from './types'
 
@@ -42,6 +42,7 @@ export const BarChart = memo(function BarChart({
     granularity,
     timeZone,
   )
+  const { revealed, onPhaseChange } = useRevealGate()
 
   // The chart is a time-series one: its x-scale runs from the first bucket to the last
   // across the full plot width, so those two land on the plot edges — and SeriesBar
@@ -77,9 +78,10 @@ export const BarChart = memo(function BarChart({
       <ComposedChart
         aspectRatio="auto"
         barGap={stacked ? 0 : 6}
-        className={cn(PILL_SCALING, className)}
+        className={cn(PILL_SCALING, className, !revealed && 'invisible')}
         data={paddedData}
         margin={CHART_MARGIN}
+        onPhaseChange={onPhaseChange}
         stacked={stacked}
       >
         <Grid horizontal />
