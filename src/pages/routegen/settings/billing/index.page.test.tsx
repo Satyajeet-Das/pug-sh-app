@@ -237,7 +237,7 @@ describe('the plan section', () => {
     )
     renderPage()
     const by = formatDateTime(new Date('2099-01-15T12:00:00Z'))
-    expect(await screen.findByText(new RegExp(`update your payment method by ${by} to avoid`))).toBeTruthy()
+    expect(await screen.findByText(new RegExp(`Update your payment method by ${by} to avoid`))).toBeTruthy()
   })
 
   // Served until the server sees whether the provider held or cancelled, and "by" a date already
@@ -251,7 +251,7 @@ describe('the plan section', () => {
     )
     renderPage()
     const notice = await screen.findByText(/We couldn't charge your card/)
-    expect(notice.textContent).toContain('update your payment method to avoid')
+    expect(notice.textContent).toContain('Update your payment method to avoid')
   })
 })
 

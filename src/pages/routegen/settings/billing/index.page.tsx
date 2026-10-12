@@ -309,7 +309,7 @@ const Billing = () => {
       <section>
         <SectionHeader title="Plan" />
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-          <span className="text-sm font-medium">{status.plan?.displayName || '—'}</span>
+          <span className="text-sm font-medium">{status.plan?.displayName}</span>
           {/* One state: a green Active beside the failed payment would contradict it. */}
           {pastDue && <StatusLabel tone="negative">{subStatusLabel(status.subscriptionStatus)}</StatusLabel>}
           {!pastDue && stateLabel && <StatusLabel tone={stateTone}>{stateLabel}</StatusLabel>}
@@ -319,7 +319,7 @@ const Billing = () => {
         <RetentionNote retentionDays={status.retentionDays} />
         {pastDue && (
           <p className="mt-2 text-xs text-negative">
-            We couldn't charge your card. Nothing has changed about your plan or your free allowance — update your
+            We couldn't charge your card. Nothing has changed about your plan or your free allowance. Update your
             payment method{graceEndsAt && ` by ${formatDateTime(graceEndsAt)}`} to avoid an interruption.
           </p>
         )}
@@ -357,7 +357,7 @@ const Billing = () => {
         </p>
         {usage?.tone === 'over' && (
           <p className="mt-1 text-xs text-negative">
-            You're past this period's free allowance. Nothing is being dropped — every event is still collected.
+            You're past this period's free allowance. Nothing is being dropped: every event is still collected.
           </p>
         )}
       </section>
