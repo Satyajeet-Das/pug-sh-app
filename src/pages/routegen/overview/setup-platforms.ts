@@ -20,10 +20,10 @@
 // attribute: the README seeds trackingConsent to demo a consent-first setup, but this quickstart
 // omits it so consent stays at the SDK default ('cookieless'), under which events still flow —
 // the setup screen polls until they do, so keep data-options dropped when syncing from the
-// README. Docs links deep-link into the one tabbed SDK page via
-// ?platform= (docs.pug.sh/docs/sdks); the CDN install is documented under the web SDK tab.
+// README. Docs links go to each SDK's own page (docs.pug.sh/sdks/<id>/); the CDN install is
+// documented on the web one.
 
-const DOCS_BASE = 'https://docs.pug.sh/docs/sdks'
+const DOCS_BASE = 'https://docs.pug.sh/sdks'
 
 // The CDN serves one immutable, self-contained bundle per SDK release at a version-in-path, @-free
 // URL (a `pkg@version` substring trips Cloudflare Email Address Obfuscation and breaks the load —
@@ -71,7 +71,7 @@ export const PLATFORMS: Record<PlatformId, Platform> = {
   web: {
     label: 'Web',
     icon: '/sdk/javascript.svg',
-    docsUrl: `${DOCS_BASE}?platform=web`,
+    docsUrl: `${DOCS_BASE}/web/`,
     sections: [
       { label: 'Install', credential: 'none', code: () => 'npm install @pug-sh/browser' },
       {
@@ -93,7 +93,7 @@ track('signed_up', { plan: 'pro' })`,
   script: {
     label: 'Script',
     icon: '/sdk/html5.svg',
-    docsUrl: `${DOCS_BASE}?platform=web`,
+    docsUrl: `${DOCS_BASE}/web/#loader-snippet`,
     sections: [
       {
         label: 'Add to your <head>',
@@ -133,7 +133,7 @@ track('signed_up', { plan: 'pro' })`,
   node: {
     label: 'Node',
     icon: '/sdk/nodejs.svg',
-    docsUrl: `${DOCS_BASE}?platform=node`,
+    docsUrl: `${DOCS_BASE}/node/`,
     needsPrivateKey: true,
     sections: [
       { label: 'Install', credential: 'none', code: () => 'npm install @pug-sh/node' },
@@ -154,7 +154,7 @@ pug.track('user_123', 'order_completed', { revenue: 49 })`,
   flutter: {
     label: 'Flutter',
     icon: '/sdk/flutter.svg',
-    docsUrl: `${DOCS_BASE}?platform=flutter`,
+    docsUrl: `${DOCS_BASE}/flutter/`,
     sections: [
       { label: 'Install', credential: 'none', code: () => 'flutter pub add pug_flutter' },
       {
