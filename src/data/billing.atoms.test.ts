@@ -175,6 +175,20 @@ describe('loadBillingAtom', () => {
     expect(getBillingStatus).toHaveBeenCalledTimes(2)
   })
 
+  // Every mounted surface forces a reload on window focus, so they queue behind one request together.
+  it('shares one queued reload among forced callers', async () => {
+    const store = newStore()
+    let settle!: (v: unknown) => void
+    getBillingStatus.mockImplementationOnce(() => new Promise(res => (settle = res)))
+
+    const first = store.set(loadBillingAtom)
+    const forced = [1, 2, 3].map(() => store.set(loadBillingAtom, { force: true }))
+    settle(status('growth'))
+    await Promise.all([first, ...forced])
+
+    expect(getBillingStatus).toHaveBeenCalledTimes(2)
+  })
+
   // The usage page already refuses it; gating here gives every surface the same answer.
   it('refuses a negative total the way the usage page does', async () => {
     getUsage.mockResolvedValue(usage(-5_000, true))
