@@ -2,7 +2,7 @@ import { useSetAtom } from 'jotai'
 import { Check, Copy, ExternalLink, RefreshCw } from 'lucide-react'
 import { useEffect, useMemo, useState } from 'react'
 import { toast } from 'sonner'
-import { highlight } from 'sugar-high'
+import { highlight, type LanguageName } from 'sugar-high'
 import { ApiKeyKind, type Project } from '@/api/genproto/dashboard/projects/v1/projects_pb'
 import CopyableCode from '@/components/copyable-code'
 import LoadingSpinner from '@/components/loading-spinner'
@@ -25,13 +25,23 @@ const PUBLIC_KEY_PLACEHOLDER = 'YOUR_PUBLIC_KEY'
 // placeholder below reads exactly like the docs' own "fill this in" convention, so a copy taken
 // mid-load is indistinguishable from a finished snippet and fails only once it is running in the
 // user's app.
-const CodeBlock = ({ code, copyable = true, context }: { code: string; copyable?: boolean; context?: string }) => {
+const CodeBlock = ({
+  code,
+  lang,
+  copyable = true,
+  context,
+}: {
+  code: string
+  lang?: LanguageName
+  copyable?: boolean
+  context?: string
+}) => {
   const { copied, copy } = useCopyToClipboard()
   // sugar-high returns an HTML string of token spans colored via `--sh-*` CSS vars (themed in
   // index.css under `.sugar-high`). Safe to inject because the input is trusted — our own static
   // snippets plus the project's backend-issued public key, never user input. (sugar-high also
   // entity-escapes the code, but the safety rests on the trusted input, not the highlighter.)
-  const html = useMemo(() => highlight(code), [code])
+  const html = useMemo(() => highlight(code, { lang }), [code, lang])
   return (
     <div className="group relative">
       <pre className="sugar-high overflow-x-auto rounded-md border border-border/50 bg-muted/50 p-3 pr-10 font-mono text-xs leading-relaxed">
@@ -139,7 +149,7 @@ const SetupMode = ({ project }: { project: Project }) => {
                     alt=""
                     aria-hidden
                     draggable={false}
-                    className="size-4 saturate-[0.5]"
+                    className="size-4 saturate-[0.5] max-sm:hidden"
                   />
                   {PLATFORMS[id].label}
                 </button>
@@ -173,6 +183,7 @@ const SetupMode = ({ project }: { project: Project }) => {
             <p className="text-xs font-medium text-muted-foreground">{section.label}</p>
             <CodeBlock
               code={section.code(project.id, publicKey || PUBLIC_KEY_PLACEHOLDER)}
+              lang={section.lang}
               copyable={!(publicKeyPending && section.credential === 'public')}
               // Which platform's which snippet got copied — the strongest activation signal on this
               // screen. platformId is stable ('web'/'node'/…); section.label is our own fixed

@@ -1,11 +1,11 @@
 // Per-platform onboarding shown on the Overview setup screen while a project has no events yet.
 //
 // Snippets are verified against the published SDKs: @pug-sh/browser (init(projectId, { apiKey })),
-// pug_flutter (Pug.init(projectId, PugOptions(apiKey))), and @pug-sh/node (new Pug({ apiKey })).
-// Client SDKs (web, script, Flutter) take the project ID at init — it namespaces the stored
-// identity/session/consent and stamps every event, so it's required, not cosmetic. The Node server
-// SDK omits it: the secret private key is project-scoped, and track() takes the distinctId first
-// since a server has no ambient user.
+// pug_flutter (Pug.init(projectId, PugOptions(apiKey))), @pug-sh/node (new Pug({ apiKey })), and
+// the pug-sh gem (Pug::Client.new(api_key:)). Client SDKs (web, script, Flutter) take the project
+// ID at init — it namespaces the stored identity/session/consent and stamps every event, so it's
+// required, not cosmetic. The server SDKs (Node, Ruby) omit it: the secret private key is
+// project-scoped, and track() takes the distinctId first since a server has no ambient user.
 //
 // Only the web snippet seeds `trackingConsent: 'granted'`, because it's the only one that calls
 // identify(), which silently no-ops under the SDK's 'cookieless' default.
@@ -20,10 +20,12 @@
 // attribute: the README seeds trackingConsent to demo a consent-first setup, but this quickstart
 // omits it so consent stays at the SDK default ('cookieless'), under which events still flow —
 // the setup screen polls until they do, so keep data-options dropped when syncing from the
-// README. Docs links deep-link into the one tabbed SDK page via
-// ?platform= (docs.pug.sh/docs/sdks); the CDN install is documented under the web SDK tab.
+// README. Docs links go to each SDK's own page (docs.pug.sh/sdks/<id>/); the CDN install is
+// documented on the web one.
 
-const DOCS_BASE = 'https://docs.pug.sh/docs/sdks'
+import type { LanguageName } from 'sugar-high'
+
+const DOCS_BASE = 'https://docs.pug.sh/sdks'
 
 // The CDN serves one immutable, self-contained bundle per SDK release at a version-in-path, @-free
 // URL (a `pkg@version` substring trips Cloudflare Email Address Obfuscation and breaks the load —
@@ -38,13 +40,13 @@ const PUG_CDN_URL = `https://cdn.pugs.dev/${PUG_CDN_VERSION}/pug.min.js`
 // Order is the source of truth; PlatformId is derived so the union can't drift from the tab list.
 // Adding a platform = one entry here + one in PLATFORMS (the total Record makes the latter a
 // compile error if forgotten).
-export const PLATFORM_ORDER = ['web', 'script', 'node', 'flutter'] as const
+export const PLATFORM_ORDER = ['web', 'script', 'node', 'ruby', 'flutter'] as const
 
 export type PlatformId = (typeof PLATFORM_ORDER)[number]
 
 // One labeled code block in a platform's setup flow, rendered top-to-bottom. `code` receives the
 // project's identifiers so client snippets can interpolate them; sections that don't need them —
-// install commands, and the Node server snippet (secret key from the environment) — ignore both args.
+// install commands, and the server snippets (secret key from the environment) — ignore both args.
 //
 // `credential` states which of them the snippet actually bakes in, so the setup screen knows whether
 // the block is waiting on a fetched key. Required, not optional: a new section is a compile error
@@ -54,6 +56,7 @@ export type CodeSection = {
   label: string
   credential: 'public' | 'none'
   code: (projectId: string, publicKey: string) => string
+  lang?: LanguageName
 }
 
 export type Platform = {
@@ -71,7 +74,7 @@ export const PLATFORMS: Record<PlatformId, Platform> = {
   web: {
     label: 'Web',
     icon: '/sdk/javascript.svg',
-    docsUrl: `${DOCS_BASE}?platform=web`,
+    docsUrl: `${DOCS_BASE}/web/`,
     sections: [
       { label: 'Install', credential: 'none', code: () => 'npm install @pug-sh/browser' },
       {
@@ -93,7 +96,7 @@ track('signed_up', { plan: 'pro' })`,
   script: {
     label: 'Script',
     icon: '/sdk/html5.svg',
-    docsUrl: `${DOCS_BASE}?platform=web`,
+    docsUrl: `${DOCS_BASE}/web/#loader-snippet`,
     sections: [
       {
         label: 'Add to your <head>',
@@ -133,7 +136,7 @@ track('signed_up', { plan: 'pro' })`,
   node: {
     label: 'Node',
     icon: '/sdk/nodejs.svg',
-    docsUrl: `${DOCS_BASE}?platform=node`,
+    docsUrl: `${DOCS_BASE}/node/`,
     needsPrivateKey: true,
     sections: [
       { label: 'Install', credential: 'none', code: () => 'npm install @pug-sh/node' },
@@ -151,10 +154,35 @@ pug.track('user_123', 'order_completed', { revenue: 49 })`,
       },
     ],
   },
+  ruby: {
+    label: 'Ruby',
+    icon: '/sdk/rubygems.svg',
+    docsUrl: `${DOCS_BASE}/ruby/`,
+    needsPrivateKey: true,
+    sections: [
+      { label: 'Install', credential: 'none', code: () => 'bundle add pug-sh' },
+      {
+        label: 'Initialize & track',
+        credential: 'none',
+        lang: 'ruby',
+        code: () => `require "pug"
+
+# Server-side: use your private key, read from the environment — never hardcode it
+pug = Pug::Client.new(api_key: ENV.fetch("PUG_API_KEY"))
+
+pug.identify("user_123", email: "ada@example.com", plan: "pro")
+
+pug.track("user_123", "order_completed", revenue: 49)
+
+# Drain on shutdown so no buffered events are lost
+pug.close`,
+      },
+    ],
+  },
   flutter: {
     label: 'Flutter',
     icon: '/sdk/flutter.svg',
-    docsUrl: `${DOCS_BASE}?platform=flutter`,
+    docsUrl: `${DOCS_BASE}/flutter/`,
     sections: [
       { label: 'Install', credential: 'none', code: () => 'flutter pub add pug_flutter' },
       {
