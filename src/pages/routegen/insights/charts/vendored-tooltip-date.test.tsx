@@ -1,4 +1,4 @@
-import { render } from '@testing-library/react'
+import { render, renderHook } from '@testing-library/react'
 import type { ReactNode } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import { Granularity } from '@/api/genproto/shared/insights/v1/insights_pb'
@@ -7,6 +7,7 @@ import type { SeriesColor } from '@/lib/event-colors'
 import { inZone } from '@/test/timezone'
 import { AreaChart } from './area-chart'
 import { BarChart } from './bar-chart'
+import { useVendoredChartPrep } from './common'
 import { formatTooltipDate } from './helpers'
 import { LineChart } from './line-chart'
 import type { ChartPoint } from './types'
@@ -126,5 +127,15 @@ describe('formatTooltipDate stays inside the ticker grammar', () => {
     const label = formatTooltipDate(AT, Granularity.WEEK, 'Asia/Kolkata')
     expect(label.split(' ')).toHaveLength(1)
     expect(label.replace(/\u00a0/g, ' ')).toBe('Jun 21 - Jun 27')
+  })
+})
+
+describe('tooltip values', () => {
+  it('shows no value for a bucket not reached yet, rather than a zero', () => {
+    const pending: ChartPoint[] = [{ date: new Date('2026-07-21T00:00:00Z'), values: [0], pending: true }]
+    const { result } = renderHook(() => useVendoredChartPrep(pending, ['a'], COLORS, Granularity.DAY, 'UTC'))
+
+    const { chartData, tooltipRows } = result.current
+    expect(tooltipRows(chartData[0]).map(row => row.value)).toEqual(['\u2014'])
   })
 })

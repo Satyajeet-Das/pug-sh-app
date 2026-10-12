@@ -25,15 +25,35 @@ export const RANGE_OPTIONS = [
   { label: '12 months', value: 365 },
 ] as const
 
-// Annotate the state with this rather than leaning on inference. `as const` makes
-// DEFAULT_RANGE_DAYS a non-fresh literal, and those are not widened, so `useState(DEFAULT_RANGE_DAYS)`
-// infers `useState<30>` and every other preset stops compiling at onChange. Typing it `number`
-// instead would go the other way and make an off-list range representable, which the server accepts
-// (its only range rule is the 400-day span) and the chip renders as a bare number.
-export type RangeDays = (typeof RANGE_OPTIONS)[number]['value']
+// Not `number`: the server accepts any span under 400 days, and the chip shows an off-list one as a bare number.
+type RangeDays = (typeof RANGE_OPTIONS)[number]['value']
 
 // Derived from the list so the default can never fall out of it.
 export const DEFAULT_RANGE_DAYS = RANGE_OPTIONS[0].value
+
+export const BILLING_PERIOD = 'billing' as const
+
+export type UsageRange = RangeDays | typeof BILLING_PERIOD
+
+export const rangeOptions = (withBillingPeriod: boolean) =>
+  withBillingPeriod ? [{ label: 'Billing period', value: BILLING_PERIOD }, ...RANGE_OPTIONS] : RANGE_OPTIONS
+
+// The provider's period as whole UTC days, [day(start), day(end)): what the billing meter counts, less any days
+// a previous subscription already counted. Null without both ends, or past the request's 400-day cap.
+export const billingPeriodDays = (startMs: number | undefined, endMs: number | undefined) => {
+  if (startMs === undefined || endMs === undefined) return null
+  const from = floorUtcDay(new Date(startMs))
+  const to = floorUtcDay(new Date(endMs))
+  const span = to.getTime() - from.getTime()
+  if (!(span > 0 && span <= 400 * DAY_MS)) return null
+  return { from, to }
+}
+
+export const resolveUsageWindow = (picked: UsageRange, billingPeriod: { from: Date; to: Date } | null) => {
+  if (picked !== BILLING_PERIOD) return { key: picked, range: lastNUtcDays(picked) }
+  if (billingPeriod) return { key: BILLING_PERIOD, range: billingPeriod }
+  return { key: DEFAULT_RANGE_DAYS, range: lastNUtcDays(DEFAULT_RANGE_DAYS) }
+}
 
 const utcFormat = (opts: Intl.DateTimeFormatOptions) => new Intl.DateTimeFormat('en-US', { ...opts, timeZone: 'UTC' })
 
@@ -43,9 +63,14 @@ const STAMP_FMT = utcFormat({ month: 'short', day: 'numeric', hour: '2-digit', m
 
 export const formatUtcStamp = (d: Date) => `${STAMP_FMT.format(d)} UTC`
 
-// periodEnd is exclusive — the next period's first day (the anniversary, at UTC midnight).
+// `end` is exclusive: the next period's first UTC day.
 export const formatPeriod = (start: Date, end: Date) =>
   `${DAY_NO_YEAR_FMT.format(start)} – ${DAY_FMT.format(new Date(end.getTime() - DAY_MS))}`
+
+export const windowLabel = (key: UsageRange, range: { from: Date; to: Date }) => {
+  if (key === BILLING_PERIOD) return `so far this billing period, ${formatPeriod(range.from, range.to)}`
+  return `over the last ${key} days`
+}
 
 const MAX_CHART_SERIES = 6
 export const OTHERS_LABEL = 'Other projects'
@@ -62,14 +87,14 @@ export type ProjectTotal = {
 
 const utcDayKey = (d: Date) => d.toISOString().slice(0, 10)
 
-// Days in the window past the meter's last pass have no rows, so the day loop fills them with 0 —
-// indistinguishable from a day that genuinely had no events. On a billing page that misreads a
-// stopped meter as a usage collapse, so the count is surfaced instead of left looking like data.
-export const unmeteredTailDays = (range: { from: Date; to: Date }, meteredAt: Date | null) => {
+// Days past the meter's last pass have no rows and draw as zero, which reads as a usage collapse. Counts the
+// window's days from then through today: a billing period's later days haven't happened yet.
+export const unmeteredTailDays = (range: { from: Date; to: Date }, meteredAt: Date | null, now = new Date()) => {
   if (!meteredAt) return 0
-  const meteredThrough = floorUtcDay(meteredAt).getTime() + DAY_MS
-  if (range.to.getTime() <= meteredThrough) return 0
-  return Math.ceil((range.to.getTime() - meteredThrough) / DAY_MS)
+  const from = Math.max(floorUtcDay(meteredAt).getTime() + DAY_MS, range.from.getTime())
+  const to = Math.min(range.to.getTime(), floorUtcDay(now).getTime() + DAY_MS)
+  if (to <= from) return 0
+  return Math.ceil((to - from) / DAY_MS)
 }
 
 // Why a cell was refused. `outOfWindow` is the only one that isn't a defect in the cell itself.
@@ -100,17 +125,20 @@ const REJECTED_SAMPLE_MAX = 3
 //                   the response already sent.
 //   `outOfWindow` — the cell reads fine but falls outside `range`. Keeps totals from ever
 //                   describing a wider window than the points do. This should be unreachable
-//                   (`lastNUtcDays` always asks on whole-UTC-day bounds, so the server's outward
-//                   snap is the identity) — which is exactly why it must be reported if it happens.
+//                   (`lastNUtcDays` and `billingPeriodDays` both ask on whole-UTC-day bounds, so the
+//                   server's outward snap is the identity) — which is exactly why it must be reported
+//                   if it happens.
 export const buildUsageSeries = (
   daily: UsageDay[],
   range: { from: Date; to: Date },
   projectName: (id: string) => string,
+  now = new Date(),
 ) => {
   const totals = new Map<string, number>()
   const byDay = new Map<string, Map<string, number>>()
   const fromMs = floorUtcDay(range.from).getTime()
   const toMs = range.to.getTime()
+  const todayMs = floorUtcDay(now).getTime()
   let malformed = 0
   let outOfWindow = 0
   const rejected: RejectedCell[] = []
@@ -193,7 +221,7 @@ export const buildUsageSeries = (
     const row = byDay.get(utcDayKey(new Date(t)))
     const values = charted.map(p => row?.get(p.projectId) ?? 0)
     if (folded.length > 0) values.push(folded.reduce((sum, p) => sum + (row?.get(p.projectId) ?? 0), 0))
-    points.push({ date: new Date(t), values })
+    points.push({ date: new Date(t), values, pending: t > todayMs })
   }
 
   return {

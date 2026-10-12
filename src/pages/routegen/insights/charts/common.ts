@@ -23,6 +23,7 @@ export const PAD_ROW_KEY = '__pad'
 
 // Prefixed like PAD_ROW_KEY so it can't collide with a `series${i}` index.
 export const COMPARE_KEY = '__compare'
+const PENDING_KEY = '__pending'
 
 // The compare-vs-prior window. `values` is already laid over this window's buckets by the caller
 // (alignComparisonValues), one per row of `data`.
@@ -64,6 +65,7 @@ export const useVendoredChartPrep = (
         row[`series${si}`] = point.values[si] ?? 0
       })
       if (comparison) row[COMPARE_KEY] = comparison.values[index] ?? 0
+      if (point.pending) row[PENDING_KEY] = true
       return row
     })
   }, [data, seriesNames, comparison])
@@ -75,17 +77,14 @@ export const useVendoredChartPrep = (
   // order is child order.
   const tooltipRows = useCallback(
     (point: Record<string, unknown>) => {
+      const value = (v: unknown) => (point[PENDING_KEY] ? '—' : Number(v ?? 0).toLocaleString())
       const rows = seriesNames.map((name, si) => ({
         color: seriesColors[si]?.line ?? '',
         label: name,
-        value: Number(point[`series${si}`] ?? 0).toLocaleString(),
+        value: value(point[`series${si}`]),
       }))
       if (comparison) {
-        rows.push({
-          color: comparison.color.line,
-          label: comparison.label,
-          value: Number(point[COMPARE_KEY] ?? 0).toLocaleString(),
-        })
+        rows.push({ color: comparison.color.line, label: comparison.label, value: value(point[COMPARE_KEY]) })
       }
       return rows
     },
