@@ -149,7 +149,7 @@ const SetupMode = ({ project }: { project: Project }) => {
                     alt=""
                     aria-hidden
                     draggable={false}
-                    className="size-4 saturate-[0.5]"
+                    className="size-4 saturate-[0.5] max-sm:hidden"
                   />
                   {PLATFORMS[id].label}
                 </button>
