@@ -96,7 +96,7 @@ describe('the free allowance banner', () => {
     renderBanner()
     expect(
       await screen.findByText(
-        "You're past your 500,000 free events — 600,000 so far this period. Nothing is being dropped.",
+        "You're past your 500,000 free events (600,000 so far this period). Nothing is being dropped.",
       ),
     ).toBeTruthy()
   })

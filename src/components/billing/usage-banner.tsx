@@ -36,7 +36,7 @@ const bannerAlert = (
   if (usage.tone === 'over') {
     return {
       tone: 'over',
-      message: `You're past your ${formatEvents(usage.included)} free events — ${formatEvents(usage.used)} so far this period. Nothing is being dropped.`,
+      message: `You're past your ${formatEvents(usage.included)} free events (${formatEvents(usage.used)} so far this period). Nothing is being dropped.`,
     }
   }
   return {

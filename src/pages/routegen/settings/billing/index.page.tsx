@@ -123,7 +123,14 @@ const FAILED_CHECKOUT_STATUSES = new Set(['failed', 'cancelled', 'canceled', 'ex
 // No rate reaches this page: they live on the provider's product, which the checkout shows. The note
 // is for an org with no subscription, which nothing bills, so it says what a plan would do.
 const PLANS_NOTE = 'With a plan, usage past the free allowance is billed by tier. Rates are shown at checkout.'
-const PLANS_NOTE_SUBSCRIBED = 'Change or cancel your plan in the billing portal.'
+
+// Checkout and the portal are admin-only, so anyone else is told who can use them.
+const plansNote = (subscribed: boolean, canBuy: boolean) => {
+  if (subscribed && canBuy) return 'Change or cancel your plan in the billing portal.'
+  if (subscribed) return 'An admin can change or cancel the plan in the billing portal.'
+  if (canBuy) return PLANS_NOTE
+  return `${PLANS_NOTE} Only an admin can subscribe.`
+}
 
 const Billing = () => {
   const org = useAtomValue(activeOrgAtom)
@@ -149,8 +156,10 @@ const Billing = () => {
   const canReadBilling = can('read', 'billing')
   // The catalog goes stale the moment the poll lands a new plan.
   const planKey = billingSignature(status)
-  // The read follows the buy button, not the page: an unbuyable catalog has nothing to draw.
-  const canBrowsePlans = !!status?.purchasable && can('create', 'billing')
+  // An unbuyable catalog has nothing to draw. The server lets every role that reads billing see the
+  // catalog, and only an admin buy from it.
+  const canBrowsePlans = !!status?.purchasable && canReadBilling
+  const canBuy = can('create', 'billing')
 
   // Billing off, no billing service, or a role that cannot read it. Any other failure retries below.
   useEffect(() => {
@@ -309,7 +318,7 @@ const Billing = () => {
       <section>
         <SectionHeader title="Plan" />
         <div className="flex flex-wrap items-center gap-x-3 gap-y-1">
-          <span className="text-sm font-medium">{status.plan?.displayName || '—'}</span>
+          <span className="text-sm font-medium">{status.plan?.displayName}</span>
           {/* One state: a green Active beside the failed payment would contradict it. */}
           {pastDue && <StatusLabel tone="negative">{subStatusLabel(status.subscriptionStatus)}</StatusLabel>}
           {!pastDue && stateLabel && <StatusLabel tone={stateTone}>{stateLabel}</StatusLabel>}
@@ -319,7 +328,7 @@ const Billing = () => {
         <RetentionNote retentionDays={status.retentionDays} />
         {pastDue && (
           <p className="mt-2 text-xs text-negative">
-            We couldn't charge your card. Nothing has changed about your plan or your free allowance — update your
+            We couldn't charge your card. Nothing has changed about your plan or your free allowance. Update your
             payment method{graceEndsAt && ` by ${formatDateTime(graceEndsAt)}`} to avoid an interruption.
           </p>
         )}
@@ -357,7 +366,7 @@ const Billing = () => {
         </p>
         {usage?.tone === 'over' && (
           <p className="mt-1 text-xs text-negative">
-            You're past this period's free allowance. Nothing is being dropped — every event is still collected.
+            You're past this period's free allowance. Nothing is being dropped: every event is still collected.
           </p>
         )}
       </section>
@@ -366,7 +375,7 @@ const Billing = () => {
 
       {canBrowsePlans && (
         <section>
-          <SectionHeader title="Plans" description={liveSubscription ? PLANS_NOTE_SUBSCRIBED : PLANS_NOTE} />
+          <SectionHeader title="Plans" description={plansNote(liveSubscription, canBuy)} />
           {plans === null ? (
             <LoadingSpinner />
           ) : plans.error ? (
@@ -383,7 +392,7 @@ const Billing = () => {
                 plans={plans.items}
                 currentSlug={status.plan?.slug}
                 busySlug={checkingOut}
-                readOnly={liveSubscription}
+                readOnly={liveSubscription || !canBuy}
                 onSelect={handleSelectPlan}
               />
               {liveSubscription && status.manageable && (
