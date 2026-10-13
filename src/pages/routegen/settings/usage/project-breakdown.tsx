@@ -1,4 +1,5 @@
 import SectionHeader from '@/components/section-header'
+import { formatEvents } from '@/lib/billing'
 import type { SeriesColor } from '@/lib/event-colors'
 import { cn } from '@/lib/utils'
 import { OTHERS_LABEL, type ProjectTotal } from './usage-helpers'
@@ -60,7 +61,7 @@ const ProjectBreakdown = ({
                     <span className="truncate">{project.name}</span>
                   </span>
                 </td>
-                <td className="py-2 text-right tabular-nums">{project.total.toLocaleString()}</td>
+                <td className="py-2 text-right tabular-nums">{formatEvents(project.total)}</td>
                 <td className="py-2 text-right tabular-nums text-muted-foreground">{share(project.total)}</td>
               </tr>
             )

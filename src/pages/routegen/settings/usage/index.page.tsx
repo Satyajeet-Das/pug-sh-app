@@ -12,86 +12,71 @@ import { Button } from '@/components/ui/button'
 import { themeRevisionAtom } from '@/data/theme.atoms'
 import { activeOrgAtom, projectsAtom, projectsLoadedAtom } from '@/data/workspace.atoms'
 import { useBilling } from '@/hooks/use-billing'
+import { formatEvents, hasLiveSubscription } from '@/lib/billing'
 import { rpcErrorMessage, toastRPCError } from '@/lib/rpc-error'
 import { toProtoTimeRange, tsToDate, validDate } from '@/lib/timestamp'
 import { BarChart } from '../../insights/charts'
 import ProjectBreakdown from './project-breakdown'
 import {
-  BILLING_PERIOD,
-  billingPeriodDays,
   buildUsageSeries,
+  CURRENT_PERIOD,
+  DAILY_ROW_CAP,
   formatPeriod,
   formatUtcStamp,
+  orgPeriod,
   rangeOptions,
   resolveUsageWindow,
   type UsageRange,
   unmeteredTailDays,
   usageSeriesColors,
-  windowLabel,
 } from './usage-helpers'
 
-// The window a response was fetched with, carried alongside it: deriving the series from the
-// picker instead would describe the new range with the old response for the whole round-trip.
-type Loaded = { usage: GetUsageResponse; range: { from: Date; to: Date }; key: UsageRange }
+// Carried with the response: derived from the picker, a pending pick would re-window and relabel it.
+type Loaded = ReturnType<typeof resolveUsageWindow> & { usage: GetUsageResponse }
 
-// An empty half-open window, so buildUsageSeries's day loop never runs and every field comes back
-// empty whatever the response holds. Only read while `loaded` is null — the series memo sits above
-// the early return, so it has to be given something.
 const NO_RANGE = { from: new Date(0), to: new Date(0) }
 const LOAD_FAILED = 'Failed to load usage'
 
-// Connect applies no deadline of its own, so without this a stalled socket leaves the promise
-// pending and the page on a bare spinner with nothing to retry. Surfaces as DeadlineExceeded.
+// Connect applies no deadline of its own, so a stalled socket would leave the page on a spinner.
 const LOAD_TIMEOUT_MS = 20_000
 
 const BILLING_WAIT_MS = 3_000
 
 const EMPTY_STATE_CLASS = 'flex flex-col items-center justify-center py-16 text-muted-foreground'
 
-// Three answers the proto distinguishes and this page must not flatten into one (usage.proto, on
-// used_events and counted): no stamp means the meter never ran, `counted` false means it has not
-// reached this period so used_events is a placeholder, and only `counted` makes it a total. A zero
-// on either of the first two states a billing figure the server never claimed. Read `counted`
-// rather than comparing usage_computed_at against period_start — the proto says not to guess it.
-type PeriodState =
+// Only `metered` shows a number or any rows: a sum of no rows reads as a measured zero.
+type WindowState =
   | { kind: 'never' }
+  | { kind: 'pending'; meteredAt: Date }
   | { kind: 'unreadable'; meteredAt: Date }
-  | { kind: 'computing'; meteredAt: Date }
   | { kind: 'metered'; meteredAt: Date }
 
-const periodState = (usedEvents: bigint, counted: boolean, meteredAt: Date | null): PeriodState => {
+const windowState = ({ usage, range }: Loaded, readable: boolean): WindowState => {
+  const meteredAt = validDate(tsToDate(usage.usageComputedAt))
   if (!meteredAt) return { kind: 'never' }
-  if (usedEvents < 0n) return { kind: 'unreadable', meteredAt }
-  if (!counted) return { kind: 'computing', meteredAt }
+  // `counted` speaks only for the usage period; any other window is judged by the meter's last pass.
+  const usagePeriod = validDate(tsToDate(usage.periodStart))?.getTime() === range.from.getTime()
+  if ((usagePeriod && !usage.counted) || meteredAt.getTime() < range.from.getTime()) {
+    return { kind: 'pending', meteredAt }
+  }
+  if (!readable) return { kind: 'unreadable', meteredAt }
   return { kind: 'metered', meteredAt }
 }
 
-const PeriodTotal = ({ state, usedEvents }: { state: PeriodState; usedEvents: bigint }) => {
-  if (state.kind === 'metered') {
-    return <span className="text-4xl tabular-nums">{usedEvents.toLocaleString()}</span>
-  }
-  if (state.kind === 'computing') {
-    return <span className="text-4xl text-muted-foreground">Computing</span>
-  }
+const WindowTotal = ({ state, total }: { state: WindowState; total: number }) => {
+  if (state.kind === 'metered') return <span className="text-4xl tabular-nums">{formatEvents(total)}</span>
+  if (state.kind === 'pending') return <span className="text-4xl text-muted-foreground">Not counted yet</span>
   return <span className="text-4xl text-muted-foreground">Unknown</span>
 }
 
-const PeriodNote = ({ state }: { state: PeriodState }) => {
+const WindowNote = ({ state }: { state: WindowState }) => {
   if (state.kind === 'never') {
-    return <>Usage has never been metered for this organization, so there is no count to show — not a zero.</>
+    return <>Usage has never been metered for this organization, so there is no count to show, not a zero.</>
   }
-  if (state.kind === 'unreadable') {
+  if (state.kind === 'pending') {
     return (
       <>
-        The server reported a negative total for this period, so there is no count to show — not a zero. Last metered{' '}
-        {formatUtcStamp(state.meteredAt)}.
-      </>
-    )
-  }
-  if (state.kind === 'computing') {
-    return (
-      <>
-        The meter has not reached this period yet, so there is no total for it — not a zero. Last metered{' '}
+        The meter has not reached this window yet, so there is no total for it, not a zero. Last metered{' '}
         {formatUtcStamp(state.meteredAt)}.
       </>
     )
@@ -99,25 +84,13 @@ const PeriodNote = ({ state }: { state: PeriodState }) => {
   return <>Last metered {formatUtcStamp(state.meteredAt)}</>
 }
 
-// Refused rows are reported, never folded into the "no events" state: this is a metering surface,
-// and a page that says zero when the server said something else is worse than one that admits it
-// could not read the answer.
-const EmptyWindow = ({
-  malformed,
-  outOfWindow,
-  metered,
-}: {
-  malformed: number
-  outOfWindow: number
-  metered: boolean
-}) => {
-  const unusable = malformed + outOfWindow
+const EmptyWindow = ({ unusable, metered }: { unusable: number; metered: boolean }) => {
   if (unusable > 0) {
     return (
       <div className={EMPTY_STATE_CLASS}>
         <p className="text-sm font-medium mb-1">Usage could not be read for this window</p>
         <p className="text-xs">
-          {unusable === 1 ? '1 row was' : `${unusable} rows were`} unusable, so there is no total to show — not a zero.
+          {unusable === 1 ? '1 row was' : `${unusable} rows were`} unusable, so there is no total to show, not a zero.
         </p>
       </div>
     )
@@ -130,21 +103,18 @@ const EmptyWindow = ({
   )
 }
 
-// Reported next to the totals they actually affect, rather than at the top of the page: `malformed`
-// and `outOfWindow` describe the daily series only, and the period figure above comes from a
-// different field entirely.
 const RejectedRows = ({ malformed, outOfWindow }: { malformed: number; outOfWindow: number }) => (
   <>
     {malformed > 0 && (
-      <p className="mb-2 text-xs text-caution">
+      <p className="mt-2 text-xs text-caution">
         {malformed === 1 ? '1 usage row' : `${malformed} usage rows`} could not be read and{' '}
-        {malformed === 1 ? 'is' : 'are'} missing from the totals below.
+        {malformed === 1 ? 'is' : 'are'} missing from these totals.
       </p>
     )}
     {outOfWindow > 0 && (
-      <p className="mb-2 text-xs text-caution">
+      <p className="mt-2 text-xs text-caution">
         {outOfWindow === 1 ? '1 usage row' : `${outOfWindow} usage rows`} fell outside the requested window and{' '}
-        {outOfWindow === 1 ? 'is' : 'are'} missing from the totals below.
+        {outOfWindow === 1 ? 'is' : 'are'} missing from these totals.
       </p>
     )}
   </>
@@ -158,49 +128,47 @@ const Usage = () => {
   const themeRevision = useAtomValue(themeRevisionAtom)
   const billing = useBilling()
 
-  // Memoized on the instants, not the status: billing refetches on every focus, and a new range would refetch usage.
-  const periodStartMs = validDate(tsToDate(billing.status?.currentPeriodStart))?.getTime()
-  const periodEndMs = validDate(tsToDate(billing.status?.currentPeriodEnd))?.getTime()
-  const billingPeriod = useMemo(() => billingPeriodDays(periodStartMs, periodEndMs), [periodStartMs, periodEndMs])
-  // Checked per render, since the memo never sees the clock: a period with no day left has ended.
-  const currentPeriod = billingPeriod && billingPeriod.to.getTime() > Date.now() ? billingPeriod : null
+  // A subscriber never gets the usage period: their allowance and bill both run on the billing period.
+  const status = billing.status
+  const subscribed = !!status && hasLiveSubscription(status)
+  const periodStartMs = validDate(tsToDate(subscribed ? status?.currentPeriodStart : status?.periodStart))?.getTime()
+  const periodEndMs = validDate(tsToDate(subscribed ? status?.currentPeriodEnd : status?.periodEnd))?.getTime()
+  // Memoized on the instants: billing refetches on every focus, and a new object would refetch usage.
+  const period = useMemo(
+    () => orgPeriod(periodStartMs, periodEndMs, subscribed),
+    [periodStartMs, periodEndMs, subscribed],
+  )
+  // Per render, since the memo never sees the clock.
+  const currentPeriod = period && period.to.getTime() > Date.now() ? period : null
 
-  const [picked, setPicked] = useState<UsageRange>(BILLING_PERIOD)
+  const [picked, setPicked] = useState<UsageRange>(CURRENT_PERIOD)
   const [loaded, setLoaded] = useState<Loaded | null>(null)
   const [error, setError] = useState<string | null>(null)
   const [fetching, setFetching] = useState(false)
 
-  // Range changes, Refresh and Retry all fire on top of the mount effect. Without this a superseded
-  // response wins the race and paints a window the range chip no longer names — and its `finally`
-  // clears the spinner while the current request is still running.
+  // Range changes, Refresh and Retry race each other; only the latest request may paint.
   const latestRequestRef = useRef(0)
 
   const load = useCallback(async () => {
-    // Claimed before any early return below, so a request already in flight can never still count
-    // as the latest and paint its numbers over this one's error.
     const requestId = ++latestRequestRef.current
     if (!org?.id) {
       setError('No organization selected')
-      // Bumping the id above orphaned any in-flight `finally`, so clear the flag here instead.
+      // The bump above keeps an in-flight response from painting over this, and orphans its `finally`.
       setFetching(false)
       return
     }
-    // Read off the clock per call, not per mount, or a tab left open overnight refreshes into
-    // yesterday's window and today's events can never arrive.
-    const { key, range } = resolveUsageWindow(picked, currentPeriod)
-    const protoRange = toProtoTimeRange(range)
+    // Per call, or a tab left open overnight refreshes into yesterday's window.
+    const requested = resolveUsageWindow(picked, currentPeriod)
+    const protoRange = toProtoTimeRange(requested.range)
     setFetching(true)
 
-    // Only the call is guarded. Widen this and a programming error in the state updates below
-    // reaches the reader as "Failed to load usage" — a network message, with a retry that cannot
-    // fix it — instead of the error boundary.
+    // Only the call is guarded, so a bug in the state updates reaches the error boundary, not a retry.
     let resp: GetUsageResponse
     try {
       resp = await usageRPC.getUsage({ orgId: org.id, range: protoRange }, { timeoutMs: LOAD_TIMEOUT_MS })
     } catch (err) {
       if (requestId !== latestRequestRef.current) return
-      // Keeps `loaded`: a flaky refresh should leave the data on screen, not drop the reader back
-      // to a bare error page whose only control retries the query that just failed.
+      // Keeps `loaded`, so a flaky refresh leaves the data on screen.
       setError(rpcErrorMessage(err, LOAD_FAILED))
       toastRPCError(err, LOAD_FAILED)
       return
@@ -209,12 +177,11 @@ const Usage = () => {
     }
 
     if (requestId !== latestRequestRef.current) return
-    setLoaded({ usage: resp, range, key })
+    setLoaded({ ...requested, usage: resp })
     setError(null)
   }, [usageRPC, org, picked, currentPeriod])
 
-  // Waits for billing so a cold load doesn't draw 30 days and then swap to the period, but never past
-  // BILLING_WAIT_MS: a stalled call gets the default, and the period swaps in when it lands.
+  // Waits for billing so a cold load doesn't draw 30 days and then swap to the period, but never past BILLING_WAIT_MS.
   const [billingWaitOver, setBillingWaitOver] = useState(false)
   useEffect(() => {
     const timer = setTimeout(() => setBillingWaitOver(true), BILLING_WAIT_MS)
@@ -225,17 +192,13 @@ const Usage = () => {
     if (billingSettled) load()
   }, [load, billingSettled])
 
-  // trackFeature sits here rather than in load() because that also runs on first load and on every range
-  // change; only this handler is a deliberate click. Named explicitly since an icon-only button
-  // autocaptures as tag `svg` with no text.
+  // Tracked here, not in load(), which also runs on mount and on range changes.
   const refresh = () => {
     trackFeature({ featureId: 'usage.refresh', featureName: 'Refresh usage' })
     load()
   }
 
-  // "Unknown project" asserts deleted, which is wrong for the far more common case: this page can
-  // mount before App's project fetch has run, and every row would accuse the org of deleting
-  // projects it still has. projectsLoadedAtom is the only thing that tells the two apart.
+  // Until projects load, a missing name is not yet a deleted project.
   const projectName = useCallback(
     (id: string) => {
       const known = projects.find(p => p.id === id)?.displayName
@@ -247,12 +210,16 @@ const Usage = () => {
   )
 
   const series = useMemo(
-    () => buildUsageSeries(loaded?.usage.daily ?? [], loaded?.range ?? NO_RANGE, projectName),
+    () =>
+      buildUsageSeries(
+        loaded?.usage.daily ?? [],
+        loaded?.range ?? NO_RANGE,
+        projectName,
+        validDate(tsToDate(loaded?.usage.usageComputedAt)) ?? undefined,
+      ),
     [loaded, projectName],
   )
 
-  // A response the page cannot fully read is a server-side defect worth a line in the console, not
-  // just a banner — the reader can report the count, but only this names the org and the rows.
   useEffect(() => {
     if (series.malformed === 0 && series.outOfWindow === 0) return
     console.error(
@@ -261,7 +228,7 @@ const Usage = () => {
     )
   }, [series.malformed, series.outOfWindow, series.rejected, org])
 
-  // The memo key for colours from the active theme's palette (see lib/event-colors.ts).
+  // Keyed on themeRevision: the palette is module state (see lib/event-colors.ts).
   const seriesColors = useMemo(() => usageSeriesColors(series.names), [series.names, themeRevision])
 
   if (!loaded) {
@@ -276,65 +243,69 @@ const Usage = () => {
     )
   }
 
-  const meteredAt = validDate(tsToDate(loaded.usage.usageComputedAt))
-  const periodStart = validDate(tsToDate(loaded.usage.periodStart))
-  const periodEnd = validDate(tsToDate(loaded.usage.periodEnd))
-  const period = periodState(loaded.usage.usedEvents, loaded.usage.counted, meteredAt)
-  const unmeteredDays = unmeteredTailDays(loaded.range, meteredAt)
+  const unusable = series.malformed + series.outOfWindow
+  const state = windowState(loaded, series.projectTotals.length > 0 || unusable === 0)
+  const metered = state.kind === 'metered'
+  const unmeteredDays = metered ? unmeteredTailDays(loaded.range, state.meteredAt) : 0
 
   return (
     <div className="space-y-8 max-w-4xl">
-      {error && <p className="text-xs text-negative">{error} — showing the last data that loaded.</p>}
+      {error && (
+        <p className="text-xs text-negative first-letter:uppercase">{error}. Showing the last data that loaded.</p>
+      )}
+
+      <div className="flex items-center justify-between gap-2">
+        {/* Names the window on screen, not the pending pick. */}
+        <OptionChip
+          label="range"
+          icon={CalendarRange}
+          options={rangeOptions(loaded.periodLabel ?? currentPeriod?.label)}
+          value={loaded.key}
+          onChange={key => {
+            // A pick that failed is still `picked`, and setPicked bails on an unchanged value.
+            if (key === picked) load()
+            else setPicked(key)
+            trackFeature({ featureId: 'usage.range', featureName: 'Usage range' })
+          }}
+        />
+        <Button variant="ghost" size="sm" onClick={refresh} disabled={fetching} aria-label="Refresh usage">
+          <RefreshCw className={fetching ? 'size-3.5 animate-spin' : 'size-3.5'} />
+        </Button>
+      </div>
+
       <section>
         <SectionHeader
-          title="Events this period"
+          title="Events"
           description="Distinct events recorded across every project in this organization. Counted in UTC, so days and periods here won't line up with a project reporting in another timezone."
         />
 
         <div className="flex flex-wrap items-baseline gap-x-4 gap-y-1">
-          <PeriodTotal state={period} usedEvents={loaded.usage.usedEvents} />
-          {periodStart && periodEnd && (
-            <span className="text-xs text-muted-foreground">{formatPeriod(periodStart, periodEnd)}</span>
-          )}
+          <WindowTotal state={state} total={series.windowTotal} />
+          <span className="text-xs text-muted-foreground">{formatPeriod(loaded.range.from, loaded.range.to)}</span>
         </div>
 
         <p className="mt-2 text-xs text-muted-foreground">
-          <PeriodNote state={period} />
+          <WindowNote state={state} />
         </p>
-      </section>
-
-      <section>
-        <div className="mb-4 flex items-center justify-between gap-2">
-          <span className="text-xs font-medium text-muted-foreground uppercase tracking-wider">Daily events</span>
-          <div className="flex items-center gap-2">
-            {/* The window on screen, not the pending pick: a chip naming a range the numbers below didn't
-                come from is the lie `Loaded.key` exists to prevent. */}
-            <OptionChip
-              label="range"
-              icon={CalendarRange}
-              options={rangeOptions(!!currentPeriod || loaded.key === BILLING_PERIOD)}
-              value={loaded.key}
-              onChange={key => {
-                setPicked(key)
-                trackFeature({ featureId: 'usage.range', featureName: 'Usage range' })
-              }}
-            />
-            <Button variant="ghost" size="sm" onClick={refresh} disabled={fetching} aria-label="Refresh usage">
-              <RefreshCw className={fetching ? 'size-3.5 animate-spin' : 'size-3.5'} />
-            </Button>
-          </div>
-        </div>
-
-        <RejectedRows malformed={series.malformed} outOfWindow={series.outOfWindow} />
-
-        {series.projectTotals.length === 0 ? (
-          <EmptyWindow
-            malformed={series.malformed}
-            outOfWindow={series.outOfWindow}
-            metered={!!meteredAt && unmeteredDays === 0}
-          />
-        ) : (
+        {metered && (
           <>
+            <RejectedRows malformed={series.malformed} outOfWindow={series.outOfWindow} />
+            {unmeteredDays > 0 && (
+              <p className="mt-2 text-xs text-caution">
+                {unmeteredDays === 1 ? 'Today is' : `The ${unmeteredDays} days through today are`} unmetered, not zero.
+              </p>
+            )}
+            {loaded.usage.daily.length >= DAILY_ROW_CAP && (
+              <p className="mt-2 text-xs text-caution">
+                This window hit the row limit for one request, so its latest days may be missing from these totals. Pick
+                a shorter window.
+              </p>
+            )}
+          </>
+        )}
+
+        <div className="mt-6">
+          {metered && series.projectTotals.length > 0 ? (
             <BarChart
               data={series.points}
               seriesNames={series.names}
@@ -343,21 +314,15 @@ const Usage = () => {
               timeZone="UTC"
               stacked
             />
-            <p className="mt-2 text-xs text-muted-foreground">
-              {series.windowTotal.toLocaleString()} events {windowLabel(loaded.key, loaded.range)} — a different window
-              from the period total above.
-            </p>
-          </>
-        )}
-        {unmeteredDays > 0 && meteredAt && (
-          <p className="mt-2 text-xs text-caution">
-            The meter last ran {formatUtcStamp(meteredAt)}, so{' '}
-            {unmeteredDays === 1 ? 'today is' : `the ${unmeteredDays} days through today are`} unmetered — not zero.
-          </p>
-        )}
+          ) : (
+            <EmptyWindow unusable={unusable} metered={metered && unmeteredDays === 0} />
+          )}
+        </div>
       </section>
 
-      <ProjectBreakdown projectTotals={series.projectTotals} windowTotal={series.windowTotal} colors={seriesColors} />
+      {metered && (
+        <ProjectBreakdown projectTotals={series.projectTotals} windowTotal={series.windowTotal} colors={seriesColors} />
+      )}
     </div>
   )
 }

@@ -1,18 +1,17 @@
-import { create } from '@bufbuild/protobuf'
+import { clone, create } from '@bufbuild/protobuf'
 import { timestampFromDate } from '@bufbuild/protobuf/wkt'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { createStore, Provider } from 'jotai'
 import type { ReactNode } from 'react'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
-import { GetBillingStatusResponseSchema } from '@/api/genproto/dashboard/billing/v1/billing_pb'
+import { GetBillingStatusResponseSchema, SubscriptionStatus } from '@/api/genproto/dashboard/billing/v1/billing_pb'
 import { OrgSchema } from '@/api/genproto/dashboard/orgs/v1/orgs_pb'
 import { ProjectSchema } from '@/api/genproto/dashboard/projects/v1/projects_pb'
 import { GetUsageResponseSchema, type UsageDay } from '@/api/genproto/dashboard/usage/v1/usage_pb'
 import type { useBilling } from '@/hooks/use-billing'
+import { DAILY_ROW_CAP, formatPeriod, lastNUtcDays } from './usage-helpers'
 
-// The page's async behaviour is the point of this file, so the call is hand-held: a deferred
-// promise per request lets a test settle them out of order, which is the only way to land a
-// superseded response into a page that has moved on.
+// Hand-held, so a test can settle requests out of order.
 const { getUsage } = vi.hoisted(() => ({ getUsage: vi.fn() }))
 
 vi.mock('@/api/rpc', async () => {
@@ -57,8 +56,9 @@ const projects = [create(ProjectSchema, { id: 'p1', displayName: 'First' })]
 const day = (iso: string, projectId: string, eventCount: number) =>
   ({ day: timestampFromDate(new Date(iso)), projectId, eventCount: BigInt(eventCount) }) as UsageDay
 
+// Metered just now unless a test says otherwise, so the headline has a total to show.
 const usage = (daily: UsageDay[], extra: Parameters<typeof create<typeof GetUsageResponseSchema>>[1] = {}) =>
-  create(GetUsageResponseSchema, { daily, ...extra })
+  create(GetUsageResponseSchema, { daily, usageComputedAt: timestampFromDate(new Date()), ...extra })
 
 const deferred = <T,>() => {
   let settle!: (v: T) => void
@@ -70,9 +70,7 @@ const deferred = <T,>() => {
   return { promise, settle, fail }
 }
 
-// projectsCommitted drives projectsLoadedAtom, which is what separates "this project was deleted"
-// from "the list has not arrived yet" — the page words those differently and the second is the
-// common path on a cold load.
+// projectsCommitted drives projectsLoadedAtom, which separates a deleted project from one not loaded yet.
 const mount = ({ projectsCommitted = true } = {}) => {
   const store = createStore()
   store.set(activeOrgAtom, org)
@@ -91,21 +89,21 @@ const pickRange = (label: string) => {
 // Read off the trigger rather than by text: the popover's option list carries the same labels.
 const rangeChip = () => screen.getByText('range').closest('button')?.textContent
 
-const caption = () =>
-  screen
-    .getByText(/events over the last/)
-    .textContent?.replace(/\s+/g, ' ')
-    .trim()
+// The window's total; the project table repeats the same figures, so it is found by its size.
+const HEADLINE = { selector: 'span.text-4xl' }
+const headline = () => screen.getByText(/./, HEADLINE).textContent
+
+const lastDays = (days: 30 | 90 | 180 | 365) => {
+  const { from, to } = lastNUtcDays(days)
+  return formatPeriod(from, to)
+}
 
 const daysAgo = (n: number) => new Date(Date.now() - n * 24 * 60 * 60 * 1000)
 
 // Inside every window a test asks for, the shortest being a billing period begun five days ago.
 const recent = () => daysAgo(2).toISOString()
 
-// Lets a superseded promise's continuation run before the assertions. waitFor is not enough on its
-// own: it invokes its callback synchronously on entry, so a condition that is already true resolves
-// before the late response has been processed at all, and the assertion after it races the
-// microtask queue — a coin flip against the very bug this file is named for.
+// Lets a superseded promise's continuation run first: waitFor can resolve before it has.
 const flush = async (p: Promise<unknown>) => {
   await act(async () => {
     await p.catch(() => {})
@@ -118,14 +116,13 @@ beforeEach(() => {
   billing.current = { loaded: true, status: null }
 })
 
-// The series palette is module-level state, so a test that flips it has to put it back or every
-// later file in the run inherits dark colours.
+// The series palette is module state, so a test that flips it has to put it back.
 afterEach(() => {
   setSeriesPalette(pugPalette('light'))
   vi.useRealTimers()
 })
 
-describe('Usage page — superseded requests', () => {
+describe('Usage page: superseded requests', () => {
   it('ignores a superseded response that lands after a newer one', async () => {
     const initial = deferred<unknown>()
     const stale = deferred<unknown>()
@@ -133,26 +130,24 @@ describe('Usage page — superseded requests', () => {
     getUsage.mockReturnValueOnce(initial.promise).mockReturnValueOnce(stale.promise).mockReturnValueOnce(newest.promise)
 
     mount()
-    // The range chip only exists once something has loaded, so seed the page first.
     initial.settle(usage([day(recent(), 'p1', 111)]))
-    await screen.findByText(/111 events over the last 30 days/)
+    await screen.findByText('111', HEADLINE)
 
-    // Two more requests in flight at once: the chip is never disabled during a fetch, so this is
-    // reachable with two quick clicks.
-    pickRange('90 days')
+    // The chip is never disabled during a fetch, so two quick picks overlap.
+    pickRange('Last 90 days')
     await waitFor(() => expect(getUsage).toHaveBeenCalledTimes(2))
-    pickRange('12 months')
+    pickRange('Last 12 months')
     await waitFor(() => expect(getUsage).toHaveBeenCalledTimes(3))
 
-    // The newest settles first, then the superseded one arrives late and must be discarded.
     newest.settle(usage([day(recent(), 'p1', 333)]))
-    await screen.findByText(/333 events over the last 365 days/)
+    await screen.findByText('333', HEADLINE)
 
     stale.settle(usage([day(recent(), 'p1', 222)]))
     await flush(stale.promise)
 
-    expect(caption()).toMatch(/333 events over the last 365 days/)
-    expect(screen.queryByText(/222 events/)).toBeNull()
+    expect(headline()).toBe('333')
+    expect(rangeChip()).toContain('Last 12 months')
+    expect(screen.queryByText('222')).toBeNull()
   })
 
   it('ignores a superseded request that fails after a newer one has landed', async () => {
@@ -163,23 +158,21 @@ describe('Usage page — superseded requests', () => {
 
     mount()
     initial.settle(usage([day(recent(), 'p1', 111)]))
-    await screen.findByText(/111 events over the last 30 days/)
+    await screen.findByText('111', HEADLINE)
 
-    pickRange('90 days')
+    pickRange('Last 90 days')
     await waitFor(() => expect(getUsage).toHaveBeenCalledTimes(2))
-    pickRange('12 months')
+    pickRange('Last 12 months')
     await waitFor(() => expect(getUsage).toHaveBeenCalledTimes(3))
 
     newest.settle(usage([day(recent(), 'p1', 333)]))
-    await screen.findByText(/333 events over the last 365 days/)
+    await screen.findByText('333', HEADLINE)
 
-    // The 90-day request then hits its deadline. It describes a window nobody is looking at any
-    // more, so its failure must not paint an error over data that is current and correct.
     stale.fail(new Error('too late'))
     await flush(stale.promise)
 
-    expect(screen.queryByText(/showing the last data that loaded/)).toBeNull()
-    expect(caption()).toMatch(/333 events over the last 365 days/)
+    expect(screen.queryByText(/Showing the last data that loaded/)).toBeNull()
+    expect(headline()).toBe('333')
   })
 
   it('stays busy when a superseded response lands while a newer request is still out', async () => {
@@ -190,15 +183,13 @@ describe('Usage page — superseded requests', () => {
 
     mount()
     initial.settle(usage([day(recent(), 'p1', 111)]))
-    await screen.findByText(/111 events over the last 30 days/)
+    await screen.findByText('111', HEADLINE)
 
-    pickRange('90 days')
+    pickRange('Last 90 days')
     await waitFor(() => expect(getUsage).toHaveBeenCalledTimes(2))
-    pickRange('12 months')
+    pickRange('Last 12 months')
     await waitFor(() => expect(getUsage).toHaveBeenCalledTimes(3))
 
-    // The 90-day response lands while the 12-month request is still running. Clearing the busy flag
-    // on it would re-enable Refresh and stop the spinner with a request still in flight.
     stale.settle(usage([day(recent(), 'p1', 222)]))
     await flush(stale.promise)
 
@@ -207,7 +198,7 @@ describe('Usage page — superseded requests', () => {
   })
 })
 
-describe('Usage page — the window on screen', () => {
+describe('Usage page: the window on screen', () => {
   it('describes the window the data came from, not the one now picked', async () => {
     const first = deferred<unknown>()
     const second = deferred<unknown>()
@@ -215,18 +206,16 @@ describe('Usage page — the window on screen', () => {
 
     mount()
     first.settle(usage([day(recent(), 'p1', 111)]))
-    await screen.findByText(/111 events over the last 30 days/)
+    await screen.findByText('111', HEADLINE)
 
-    // Second request in flight and deliberately never settled: for that whole round trip the
-    // caption must keep describing the 30-day window the numbers actually came from.
-    pickRange('12 months')
+    pickRange('Last 12 months')
     await waitFor(() => expect(getUsage).toHaveBeenCalledTimes(2))
-    expect(caption()).toMatch(/111 events over the last 30 days/)
+    expect(headline()).toBe('111')
+    expect(screen.getByText(lastDays(30))).toBeTruthy()
+    expect(rangeChip()).toContain('Last 30 days')
   })
 
-  // Widening can't catch this: a cell inside the 30-day window is inside every wider one too, so
-  // the window has to *shrink* for a re-derived series to lose anything. This is the regression
-  // `Loaded.range` exists for, and the caption-only assertion above passes straight through it.
+  // Only a shrinking window can catch a series re-derived from the picker: the old cell falls out of it.
   it('keeps the numbers on the window they were fetched for, not the one now picked', async () => {
     const first = deferred<unknown>()
     const second = deferred<unknown>()
@@ -235,21 +224,16 @@ describe('Usage page — the window on screen', () => {
 
     mount()
     first.settle(usage([day(recent(), 'p1', 111)]))
-    await screen.findByText(/111 events over the last 30 days/)
+    await screen.findByText('111', HEADLINE)
 
-    pickRange('12 months')
-    // Dated so that only the 12-month window can contain it.
+    pickRange('Last 12 months')
     second.settle(usage([day(daysAgo(60).toISOString(), 'p1', 222)]))
-    await screen.findByText(/222 events over the last 365 days/)
+    await screen.findByText('222', HEADLINE)
 
-    // Shrink again and leave the request in flight. Re-deriving the series from the picker would
-    // re-window the response on screen to 30 days, drop the 60-day-old cell, and collapse a page
-    // full of real numbers into "no metered events".
-    pickRange('30 days')
+    pickRange('Last 30 days')
     await waitFor(() => expect(getUsage).toHaveBeenCalledTimes(3))
 
-    expect(caption()).toMatch(/222 events over the last 365 days/)
-    expect(screen.queryByText(/No metered events in this window/)).toBeNull()
+    expect(headline()).toBe('222')
   })
 
   it('keeps the range chip naming the window that is actually on screen', async () => {
@@ -259,18 +243,32 @@ describe('Usage page — the window on screen', () => {
 
     mount()
     first.settle(usage([day(recent(), 'p1', 111)]))
-    await screen.findByText(/111 events over the last 30 days/)
+    await screen.findByText('111', HEADLINE)
 
-    pickRange('12 months')
+    pickRange('Last 12 months')
     await waitFor(() => expect(getUsage).toHaveBeenCalledTimes(2))
-    // Still out, so the chip must not yet claim a window the numbers beneath it didn't come from.
-    expect(rangeChip()).toContain('30 days')
+    expect(rangeChip()).toContain('Last 30 days')
 
     second.fail(new Error('nope'))
-    await screen.findByText(/showing the last data that loaded/)
-    // And a change that never applied must never be left named on the control that applies it.
-    expect(rangeChip()).toContain('30 days')
-    expect(caption()).toMatch(/111 events over the last 30 days/)
+    await screen.findByText(/Showing the last data that loaded/)
+    expect(rangeChip()).toContain('Last 30 days')
+    expect(headline()).toBe('111')
+  })
+
+  it('retries a range whose fetch failed when it is picked again', async () => {
+    getUsage
+      .mockResolvedValueOnce(usage([day(recent(), 'p1', 111)]))
+      .mockRejectedValueOnce(new Error('nope'))
+      .mockResolvedValueOnce(usage([day(recent(), 'p1', 333)]))
+
+    mount()
+    await screen.findByText('111', HEADLINE)
+
+    pickRange('Last 12 months')
+    await screen.findByText(/Showing the last data that loaded/)
+    pickRange('Last 12 months')
+
+    await screen.findByText('333', HEADLINE)
   })
 
   it('sends the picked window, bounded by a deadline', async () => {
@@ -278,18 +276,15 @@ describe('Usage page — the window on screen', () => {
     getUsage.mockResolvedValueOnce(usage([day(recent(), 'p1', 10)])).mockReturnValueOnce(second.promise)
 
     mount()
-    await screen.findByText(/10 events over the last 30 days/)
+    await screen.findByText('10', HEADLINE)
 
     const [firstReq, firstOpts] = getUsage.mock.calls[0]
-    // Connect applies no deadline of its own; without one a stalled socket strands the page on a
-    // spinner with nothing to retry.
     expect(firstOpts).toMatchObject({ timeoutMs: expect.any(Number) })
     const span = (req: { range: { from: { seconds: bigint }; to: { seconds: bigint } } }) =>
       Number(req.range.to.seconds - req.range.from.seconds)
     expect(span(firstReq)).toBe(30 * 24 * 60 * 60)
 
-    // The picker has to reach the request, not just the caption.
-    pickRange('12 months')
+    pickRange('Last 12 months')
     await waitFor(() => expect(getUsage).toHaveBeenCalledTimes(2))
     expect(span(getUsage.mock.calls[1][0])).toBe(365 * 24 * 60 * 60)
   })
@@ -301,55 +296,119 @@ describe('Usage page — the window on screen', () => {
 
     mount()
     first.settle(usage([day(recent(), 'p1', 111)]))
-    await screen.findByText(/111 events over the last 30 days/)
+    await screen.findByText('111', HEADLINE)
 
     fireEvent.click(screen.getByLabelText('Refresh usage'))
     second.fail(new Error('nope'))
 
-    await screen.findByText(/showing the last data that loaded/)
-    // The reader keeps the numbers rather than being dropped onto a bare error page whose only
-    // control retries the query that just failed.
-    expect(caption()).toMatch(/111 events over the last 30 days/)
+    await screen.findByText(/Showing the last data that loaded/)
+    expect(headline()).toBe('111')
+  })
+
+  // The server's period count covers the usage period, not the window picked here.
+  it("totals the window on screen, not the server's period count", async () => {
+    getUsage.mockResolvedValueOnce(
+      usage([day(recent(), 'p1', 10), day(recent(), 'p2', 5)], { counted: true, usedEvents: 999n }),
+    )
+
+    mount()
+
+    await screen.findByText('15', HEADLINE)
+    expect(screen.queryByText('999')).toBeNull()
+    expect(screen.queryByText(/row limit/)).toBeNull()
   })
 })
 
-describe('Usage page — billing period', () => {
+describe('Usage page: the current period', () => {
   type Req = { range: { from: { seconds: bigint }; to: { seconds: bigint } } }
+
+  const utcDay = (d: Date) => Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) / 1000
+
+  // 12 days back against subscribe()'s 5, so a request shows which period the page chose.
+  const usagePeriod = (startDaysAgo = 12) => {
+    const start = daysAgo(startDaysAgo)
+    start.setUTCHours(0, 0, 0, 0)
+    const end = new Date(start)
+    end.setUTCMonth(end.getUTCMonth() + 1)
+    return {
+      periodStart: timestampFromDate(start),
+      periodEnd: timestampFromDate(end),
+      from: BigInt(utcDay(start)),
+      to: BigInt(utcDay(end)),
+    }
+  }
+
+  const unsubscribed = (startDaysAgo?: number) => {
+    const period = usagePeriod(startDaysAgo)
+    billing.current = {
+      loaded: true,
+      status: create(GetBillingStatusResponseSchema, { periodStart: period.periodStart, periodEnd: period.periodEnd }),
+    }
+    return period
+  }
 
   const subscribe = (startDaysAgo = 5) => {
     const start = daysAgo(startDaysAgo)
     start.setUTCHours(9, 30, 0, 0)
     const end = new Date(start)
     end.setUTCMonth(end.getUTCMonth() + 1)
+    const { periodStart, periodEnd } = usagePeriod()
     billing.current = {
       loaded: true,
       status: create(GetBillingStatusResponseSchema, {
+        periodStart,
+        periodEnd,
+        subscriptionStatus: SubscriptionStatus.ACTIVE,
         currentPeriodStart: timestampFromDate(start),
         currentPeriodEnd: timestampFromDate(end),
       }),
     }
-    const utcDay = (d: Date) => Date.UTC(d.getUTCFullYear(), d.getUTCMonth(), d.getUTCDate()) / 1000
     return { from: BigInt(utcDay(start)), to: BigInt(utcDay(end)), days: (utcDay(end) - utcDay(start)) / 86_400 }
   }
 
-  it("defaults a subscriber's chart to the whole billing period, days not yet reached included", async () => {
+  it('defaults a subscriber to the whole billing period, days not yet reached included', async () => {
     const period = subscribe()
-    getUsage.mockResolvedValueOnce(
-      usage([day(recent(), 'p1', 10)], {
-        counted: true,
-        usedEvents: 10n,
-        usageComputedAt: timestampFromDate(new Date()),
-      }),
-    )
+    getUsage.mockResolvedValueOnce(usage([day(recent(), 'p1', 10)]))
 
     const { container } = mount()
-    await screen.findByText(/10 events so far this billing period/)
+    await screen.findByText('10', HEADLINE)
 
     const req: Req = getUsage.mock.calls[0][0]
     expect([req.range.from.seconds, req.range.to.seconds]).toEqual([period.from, period.to])
-    expect(rangeChip()).toContain('Billing period')
+    expect(rangeChip()).toContain('Current billing period')
     expect(container.querySelectorAll('g.series-bar rect')).toHaveLength(period.days)
     expect(screen.queryByText(/unmetered/)).toBeNull()
+  })
+
+  it('defaults an org with no subscription to its usage period', async () => {
+    const period = unsubscribed()
+    getUsage.mockResolvedValueOnce(usage([day(recent(), 'p1', 10)]))
+
+    mount()
+    await screen.findByText('10', HEADLINE)
+
+    const req: Req = getUsage.mock.calls[0][0]
+    expect([req.range.from.seconds, req.range.to.seconds]).toEqual([period.from, period.to])
+    expect(rangeChip()).toContain('Current period')
+    expect(rangeChip()).not.toContain('billing')
+  })
+
+  it('never gives a live subscription the usage period, even with no billing dates', async () => {
+    const { periodStart, periodEnd } = usagePeriod()
+    billing.current = {
+      loaded: true,
+      status: create(GetBillingStatusResponseSchema, {
+        periodStart,
+        periodEnd,
+        subscriptionStatus: SubscriptionStatus.ACTIVE,
+      }),
+    }
+    getUsage.mockResolvedValueOnce(usage([day(recent(), 'p1', 10)]))
+
+    mount()
+    await screen.findByText('10', HEADLINE)
+
+    expect(rangeChip()).toContain('Last 30 days')
   })
 
   it('waits for billing before the first request, so a cold load asks once', async () => {
@@ -362,7 +421,7 @@ describe('Usage page — billing period', () => {
 
     const period = subscribe()
     rerender(<Usage />)
-    await screen.findByText(/10 events so far this billing period/)
+    await screen.findByText('10', HEADLINE)
     expect(getUsage).toHaveBeenCalledTimes(1)
     expect((getUsage.mock.calls[0][0] as Req).range.from.seconds).toBe(period.from)
   })
@@ -377,7 +436,8 @@ describe('Usage page — billing period', () => {
       vi.advanceTimersByTime(5_000)
     })
 
-    await screen.findByText(/10 events over the last 30 days/)
+    await screen.findByText('10', HEADLINE)
+    expect(rangeChip()).toContain('Last 30 days')
   })
 
   it('reports a missing org rather than waiting on billing', async () => {
@@ -392,25 +452,44 @@ describe('Usage page — billing period', () => {
     await screen.findByText('No organization selected')
   })
 
-  it('falls back to the rolling default once the period has ended', async () => {
+  it('falls back to the rolling default once the billing period has ended, never to the usage period', async () => {
     subscribe(40)
     getUsage.mockResolvedValue(usage([day(recent(), 'p1', 10)]))
 
     mount()
 
-    await screen.findByText(/10 events over the last 30 days/)
+    await screen.findByText('10', HEADLINE)
+    expect(rangeChip()).toContain('Last 30 days')
     fireEvent.click(screen.getByText('range'))
-    expect(screen.queryByText('Billing period')).toBeNull()
+    expect(screen.queryByText('Current billing period')).toBeNull()
+    expect(screen.queryByText('Current period')).toBeNull()
   })
 
-  it('calls the period unmetered, not empty, when the meter has not run since it began', async () => {
+  it('says a period the meter has not reached is not counted yet, and lists nothing under it', async () => {
     subscribe()
-    getUsage.mockResolvedValue(usage([], { counted: true, usageComputedAt: timestampFromDate(daysAgo(8)) }))
+    getUsage.mockResolvedValue(usage([day(recent(), 'p1', 10)], { usageComputedAt: timestampFromDate(daysAgo(8)) }))
+
+    const { container } = mount()
+
+    await screen.findByText('Not counted yet', HEADLINE)
+    expect(screen.getByText(/has not reached this window yet/)).toBeTruthy()
+    expect(screen.queryByText(/stored as no row at all/)).toBeNull()
+    expect(screen.queryByText(/unmetered/)).toBeNull()
+    expect(screen.queryByText('By project')).toBeNull()
+    expect(container.querySelector('g.series-bar')).toBeNull()
+  })
+
+  it('trusts counted for the usage period, and the stamp for any other window', async () => {
+    const period = unsubscribed(0)
+    getUsage
+      .mockResolvedValueOnce(usage([], { periodStart: period.periodStart }))
+      .mockResolvedValueOnce(usage([day(recent(), 'p1', 10)], { periodStart: period.periodStart }))
 
     mount()
+    await screen.findByText('Not counted yet', HEADLINE)
 
-    await screen.findByText(/the 6 days through today are unmetered — not zero/)
-    expect(screen.queryByText(/stored as no row at all/)).toBeNull()
+    pickRange('Last 30 days')
+    await screen.findByText('10', HEADLINE)
   })
 
   it('keeps naming the billing period while a refetch replaces it', async () => {
@@ -418,12 +497,12 @@ describe('Usage page — billing period', () => {
     getUsage.mockResolvedValueOnce(usage([day(recent(), 'p1', 10)])).mockReturnValueOnce(new Promise(() => {}))
 
     const { rerender } = mount()
-    await screen.findByText(/10 events so far this billing period/)
+    await screen.findByText('10', HEADLINE)
     billing.current = { loaded: true, status: null }
     rerender(<Usage />)
 
     await waitFor(() => expect(getUsage).toHaveBeenCalledTimes(2))
-    expect(rangeChip()).toContain('Billing period')
+    expect(rangeChip()).toContain('Current billing period')
   })
 
   it('does not refetch when billing reloads the same period', async () => {
@@ -431,39 +510,38 @@ describe('Usage page — billing period', () => {
     getUsage.mockResolvedValue(usage([day(recent(), 'p1', 10)]))
 
     const { rerender } = mount()
-    await screen.findByText(/10 events so far this billing period/)
+    await screen.findByText('10', HEADLINE)
     const { status } = billing.current
-    billing.current = {
-      loaded: true,
-      status: create(GetBillingStatusResponseSchema, {
-        currentPeriodStart: status?.currentPeriodStart,
-        currentPeriodEnd: status?.currentPeriodEnd,
-      }),
-    }
+    billing.current = { loaded: true, status: status && clone(GetBillingStatusResponseSchema, status) }
     rerender(<Usage />)
     await act(async () => {})
 
     expect(getUsage).toHaveBeenCalledTimes(1)
   })
 
-  it('still offers the rolling ranges', async () => {
+  it('still offers the rolling ranges, and the headline follows them', async () => {
     subscribe()
-    getUsage.mockResolvedValue(usage([day(recent(), 'p1', 10)]))
+    getUsage
+      .mockResolvedValueOnce(usage([day(recent(), 'p1', 10)]))
+      .mockResolvedValueOnce(usage([day(recent(), 'p1', 10), day(daysAgo(60).toISOString(), 'p1', 5)]))
 
     mount()
-    await screen.findByText(/10 events so far this billing period/)
-    pickRange('90 days')
-    await screen.findByText(/10 events over the last 90 days/)
+    await screen.findByText('10', HEADLINE)
+    pickRange('Last 90 days')
+
+    await screen.findByText('15', HEADLINE)
+    expect(screen.getByText(lastDays(90))).toBeTruthy()
   })
 })
 
-describe('Usage page — refusing to assert a zero', () => {
+describe('Usage page: refusing to assert a zero', () => {
   it('reports unreadable rows instead of claiming there were no events', async () => {
     getUsage.mockResolvedValueOnce(usage([{ day: undefined, projectId: 'p1', eventCount: 900n } as UsageDay]))
 
     mount()
 
     await screen.findByText(/Usage could not be read for this window/)
+    expect(headline()).toBe('Unknown')
     expect(screen.queryByText(/No metered events in this window/)).toBeNull()
   })
 
@@ -475,134 +553,73 @@ describe('Usage page — refusing to assert a zero', () => {
     mount()
 
     await screen.findByText(/1 usage row could not be read/)
-    expect(caption()).toMatch(/10 events over the last 30 days/)
+    expect(headline()).toBe('10')
   })
 
-  // Out-of-window rows read fine but describe days the page never asked about. Dropped silently,
-  // a response entirely outside the window renders as "no metered events" — the same false zero.
   it('reports out-of-window rows instead of claiming there were no events', async () => {
     getUsage.mockResolvedValueOnce(usage([day('2020-01-01T00:00:00Z', 'p1', 900)]))
 
     mount()
 
     await screen.findByText(/Usage could not be read for this window/)
+    expect(headline()).toBe('Unknown')
     expect(screen.queryByText(/No metered events in this window/)).toBeNull()
   })
 
-  // The obvious version of this test passes against an implementation keyed on usedEvents, because
-  // usedEvents is 0n in both cases. Only the pair discriminates, so both halves stay together.
+  // A sum of no rows is 0 in both halves, so only the pair discriminates.
   it('separates a never-metered org from one metered at zero', async () => {
-    getUsage.mockResolvedValueOnce(usage([]))
+    getUsage.mockResolvedValueOnce(usage([], { usageComputedAt: undefined }))
     const { unmount } = mount()
-    await screen.findByText('Unknown')
+    await screen.findByText('Unknown', HEADLINE)
+    expect(screen.getByText(/never been metered/)).toBeTruthy()
     unmount()
 
-    getUsage.mockResolvedValueOnce(
-      usage([], {
-        counted: true,
-        usedEvents: 0n,
-        usageComputedAt: timestampFromDate(new Date('2026-08-12T02:15:00Z')),
-      }),
-    )
+    getUsage.mockResolvedValueOnce(usage([]))
     mount()
-    await screen.findByText(/Last metered Aug 12, 02:15 UTC/)
-    expect(screen.queryByText('Unknown')).toBeNull()
+    await screen.findByText('0', HEADLINE)
+    expect(screen.getByText(/^Last metered/)).toBeTruthy()
   })
 
-  // `counted` false is a placeholder zero carrying the previous period's stamp, which usage.proto
-  // says to render as computing. Happens every 1st of the month, and unboundedly if the meter stops.
-  // The stamp sits INSIDE the period, where the usage_computed_at comparison this replaced reads a
-  // placeholder zero as a real total.
-  it('renders a period the meter has not reached as computing, not as zero', async () => {
+  it('says the tail of the window is unmetered rather than letting zero bars imply no usage', async () => {
     getUsage.mockResolvedValueOnce(
-      usage([], {
-        usedEvents: 0n,
-        counted: false,
-        periodStart: timestampFromDate(new Date('2026-09-01T00:00:00Z')),
-        periodEnd: timestampFromDate(new Date('2026-10-01T00:00:00Z')),
-        usageComputedAt: timestampFromDate(new Date('2026-09-15T02:15:00Z')),
-      }),
+      usage([day(daysAgo(8).toISOString(), 'p1', 10)], { usageComputedAt: timestampFromDate(daysAgo(7)) }),
     )
 
     mount()
 
-    await screen.findByText('Computing')
-    await screen.findByText(/has not reached this period yet/)
-    expect(screen.queryByText('0')).toBeNull()
+    await screen.findByText(/^The 7 days through today are unmetered, not zero/)
+    expect(headline()).toBe('10')
   })
 
-  // The inverse: the meter can run mid-period against an older stamp, which that comparison called
-  // "computing".
-  it('renders a counted total even when the stamp predates the period', async () => {
-    getUsage.mockResolvedValueOnce(
-      usage([], {
-        usedEvents: 4_200n,
-        counted: true,
-        periodStart: timestampFromDate(new Date('2026-09-01T00:00:00Z')),
-        periodEnd: timestampFromDate(new Date('2026-10-01T00:00:00Z')),
-        usageComputedAt: timestampFromDate(new Date('2026-08-31T23:40:00Z')),
-      }),
+  it('counts a window from the first meter pass inside it', async () => {
+    const { from } = lastNUtcDays(30)
+    const stampedAt = (offsetMs: number) => ({
+      usageComputedAt: timestampFromDate(new Date(from.getTime() + offsetMs)),
+    })
+    getUsage.mockResolvedValueOnce(usage([], stampedAt(-1)))
+    const { unmount } = mount()
+    await screen.findByText('Not counted yet', HEADLINE)
+    unmount()
+
+    getUsage.mockResolvedValueOnce(usage([day(from.toISOString(), 'p1', 10)], stampedAt(60 * 60 * 1000)))
+    mount()
+    await screen.findByText('10', HEADLINE)
+  })
+
+  it('warns when a window may have lost its newest days to the row cap', async () => {
+    const cells = Array.from({ length: DAILY_ROW_CAP }, (_, i) =>
+      day(daysAgo(i % 30).toISOString(), `p${Math.floor(i / 30)}`, 1),
     )
+    getUsage.mockResolvedValueOnce(usage(cells))
 
     mount()
 
-    await screen.findByText('4,200')
-    expect(screen.queryByText('Computing')).toBeNull()
+    await screen.findByText(/latest days may be missing from these totals/)
   })
 
-  it('renders the total once the meter has reached the period', async () => {
-    getUsage.mockResolvedValueOnce(
-      usage([], {
-        counted: true,
-        usedEvents: 4200n,
-        periodStart: timestampFromDate(new Date('2026-08-01T00:00:00Z')),
-        periodEnd: timestampFromDate(new Date('2026-09-01T00:00:00Z')),
-        usageComputedAt: timestampFromDate(new Date('2026-08-12T02:15:00Z')),
-      }),
-    )
-
-    mount()
-
-    await screen.findByText('4,200')
-    expect(screen.queryByText('Computing')).toBeNull()
-  })
-
-  it('refuses to render a negative period total', async () => {
-    getUsage.mockResolvedValueOnce(
-      usage([], { usedEvents: -5n, usageComputedAt: timestampFromDate(new Date('2026-08-12T02:15:00Z')) }),
-    )
-
-    mount()
-
-    await screen.findByText(/negative total/)
-    expect(screen.queryByText('-5')).toBeNull()
-  })
-
-  // Days past the meter's last pass have no rows, so the chart fills them with zero — visually
-  // identical to days that genuinely had no events. On a billing page that reads as a usage
-  // collapse rather than an outage.
-  it('says the tail of the chart is unmetered rather than letting zero bars imply no usage', async () => {
-    getUsage.mockResolvedValueOnce(
-      usage([day(daysAgo(8).toISOString(), 'p1', 10)], {
-        counted: true,
-        usedEvents: 10n,
-        usageComputedAt: timestampFromDate(daysAgo(7)),
-      }),
-    )
-
-    mount()
-
-    await screen.findByText(/the 7 days through today are unmetered — not zero/)
-  })
-
-  // protobuf-es returns a truthy Invalid Date for an out-of-range int64 rather than throwing, and
-  // Intl.DateTimeFormat throws RangeError on it — during render, which takes down the whole
-  // Settings shell (RouteErrorBoundary wraps Layout) with a retry that hits the same response.
-  it('survives period stamps too large to be dates, rather than throwing mid-render', async () => {
-    const huge = { seconds: 1754006400000000n, nanos: 0 }
-    getUsage.mockResolvedValueOnce(
-      usage([], { usedEvents: 10n, usageComputedAt: huge, periodStart: huge, periodEnd: huge }),
-    )
+  // protobuf-es hands back an Invalid Date for an out-of-range stamp, which Intl throws on mid-render.
+  it('survives a meter stamp too large to be a date, rather than throwing mid-render', async () => {
+    getUsage.mockResolvedValueOnce(usage([], { usageComputedAt: { seconds: 1754006400000000n, nanos: 0 } }))
 
     mount()
 
@@ -610,17 +627,13 @@ describe('Usage page — refusing to assert a zero', () => {
   })
 })
 
-describe('Usage page — theme', () => {
-  // CLAUDE.md calls this trap out by name: getIndexedColor reads a module-level scheme that the
-  // theme toggle mutates, and a module mutation cannot invalidate a useMemo. Both halves below are
-  // required and that is exactly the point — flipping the scheme alone leaves the memo holding
-  // stale colours, flipping the atom alone recomputes the identical values, and only listing
-  // themeRevision in the deps makes the two agree.
+describe('Usage page: theme', () => {
+  // Both halves are required: the palette is module state, and only themeRevision in the memo deps re-reads it.
   it('re-colours the breakdown when the theme flips', async () => {
     getUsage.mockResolvedValueOnce(usage([day(recent(), 'p1', 10)]))
 
     const { container, store } = mount()
-    await screen.findByText(/10 events over the last 30 days/)
+    await screen.findByText('10', HEADLINE)
 
     const dot = () => (container.querySelector('tbody tr td span span[style]') as HTMLElement).style.backgroundColor
     const light = dot()
@@ -639,7 +652,7 @@ describe('Usage page — theme', () => {
     getUsage.mockResolvedValueOnce(usage([day(recent(), 'p1', 10)]))
 
     const { container, store } = mount()
-    await screen.findByText(/10 events over the last 30 days/)
+    await screen.findByText('10', HEADLINE)
 
     const dot = () => (container.querySelector('tbody tr td span span[style]') as HTMLElement).style.backgroundColor
     act(() => {
@@ -669,7 +682,7 @@ describe('Usage page — theme', () => {
   })
 })
 
-describe('Usage page — naming projects', () => {
+describe('Usage page: naming projects', () => {
   it('does not accuse the org of deleting a project before the list has loaded', async () => {
     getUsage.mockResolvedValueOnce(usage([day(recent(), 'ghost', 10)]))
 

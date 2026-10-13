@@ -3,14 +3,14 @@ import { afterEach, describe, expect, it, vi } from 'vitest'
 import type { UsageDay } from '@/api/genproto/dashboard/usage/v1/usage_pb'
 import { inZone, inZoneAsync } from '@/test/timezone'
 import {
-  BILLING_PERIOD,
-  billingPeriodDays,
   buildUsageSeries,
+  CURRENT_PERIOD,
   DAY_MS,
   DEFAULT_RANGE_DAYS,
   formatPeriod,
   lastNUtcDays,
   OTHERS_LABEL,
+  orgPeriod,
   RANGE_OPTIONS,
   resolveUsageWindow,
   unmeteredTailDays,
@@ -50,11 +50,7 @@ describe('lastNUtcDays', () => {
     }
   })
 
-  // The clock is pinned, and that is the whole point. A local-midnight implementation is only
-  // distinguishable from this one during the hours the two zones disagree on the date — about 7 of
-  // 24 in Los Angeles — so an unpinned version of this test passes against the bug most of the day.
-  // Asserting the exact day also matters: `Date.UTC(...)` returns midnight for whatever day it is
-  // handed, so a `/T00:00:00.000Z$/` match is true by construction and proves nothing.
+  // Pinned: local and UTC dates only disagree for part of the day, so an unpinned test mostly passes the bug.
   describe('anchoring, with the clock pinned', () => {
     afterEach(() => {
       vi.useRealTimers()
@@ -90,8 +86,7 @@ describe('unmeteredTailDays', () => {
   const window = () => range('2026-08-01T00:00:00Z', '2026-08-11T00:00:00Z')
 
   it('counts the days the chart fills with zero because the meter never reached them', () => {
-    // Meter last ran on the 5th, so the 6th through the 10th are unmetered rather than empty —
-    // five zero bars that would otherwise read as a usage collapse.
+    // Meter last ran on the 5th, so the 6th through the 10th are unmetered rather than empty.
     expect(unmeteredTailDays(window(), new Date('2026-08-05T06:00:00Z'))).toBe(5)
   })
 
@@ -116,11 +111,11 @@ describe('unmeteredTailDays', () => {
   })
 })
 
-describe('billingPeriodDays', () => {
+describe('orgPeriod', () => {
   const ms = (iso: string) => new Date(iso).getTime()
 
   it('covers whole UTC days and leaves the renewal day to the next period', () => {
-    const period = billingPeriodDays(ms('2026-10-08T09:30:00Z'), ms('2026-11-08T09:30:00Z'))
+    const period = orgPeriod(ms('2026-10-08T09:30:00Z'), ms('2026-11-08T09:30:00Z'), true)
     expect(period?.from.toISOString()).toBe('2026-10-08T00:00:00.000Z')
     expect(period?.to.toISOString()).toBe('2026-11-08T00:00:00.000Z')
   })
@@ -128,36 +123,47 @@ describe('billingPeriodDays', () => {
   // 02:00 UTC is still the previous evening in Los Angeles, so local day parts would start a day early.
   it('floors on the UTC day west of UTC', () => {
     inZone(WESTERN, () => {
-      const period = billingPeriodDays(ms('2026-10-08T02:00:00Z'), ms('2026-11-08T02:00:00Z'))
+      const period = orgPeriod(ms('2026-10-08T02:00:00Z'), ms('2026-11-08T02:00:00Z'), true)
       expect(period?.from.toISOString()).toBe('2026-10-08T00:00:00.000Z')
       expect(period?.to.toISOString()).toBe('2026-11-08T00:00:00.000Z')
     })
   })
 
+  it('says billing only for a billing period', () => {
+    expect(orgPeriod(ms('2026-10-08T00:00:00Z'), ms('2026-11-08T00:00:00Z'), true)?.label).toBe(
+      'Current billing period',
+    )
+    expect(orgPeriod(ms('2026-10-08T00:00:00Z'), ms('2026-11-08T00:00:00Z'), false)?.label).toBe('Current period')
+  })
+
   it('is null without both ends', () => {
-    expect(billingPeriodDays(undefined, ms('2026-11-08T09:30:00Z'))).toBeNull()
-    expect(billingPeriodDays(ms('2026-10-08T09:30:00Z'), undefined)).toBeNull()
+    expect(orgPeriod(undefined, ms('2026-11-08T09:30:00Z'), true)).toBeNull()
+    expect(orgPeriod(ms('2026-10-08T09:30:00Z'), undefined, true)).toBeNull()
   })
 
   it('is null for a period with no whole day in it', () => {
-    expect(billingPeriodDays(ms('2026-10-08T09:30:00Z'), ms('2026-10-08T20:00:00Z'))).toBeNull()
+    expect(orgPeriod(ms('2026-10-08T09:30:00Z'), ms('2026-10-08T20:00:00Z'), true)).toBeNull()
   })
 
   it("is null past the request's 400-day cap, which no window could load", () => {
-    expect(billingPeriodDays(ms('2026-10-08T09:30:00Z'), ms('2027-11-20T09:30:00Z'))).toBeNull()
+    expect(orgPeriod(ms('2026-10-08T09:30:00Z'), ms('2027-11-20T09:30:00Z'), true)).toBeNull()
   })
 })
 
 describe('resolveUsageWindow', () => {
-  const period = range('2026-10-08T00:00:00Z', '2026-11-08T00:00:00Z')
+  const period = { ...range('2026-10-08T00:00:00Z', '2026-11-08T00:00:00Z'), label: 'Current billing period' }
 
-  it('follows the billing period until another range is picked', () => {
-    expect(resolveUsageWindow(BILLING_PERIOD, period)).toEqual({ key: BILLING_PERIOD, range: period })
+  it('follows the period until another range is picked', () => {
+    expect(resolveUsageWindow(CURRENT_PERIOD, period)).toEqual({
+      key: CURRENT_PERIOD,
+      range: { from: period.from, to: period.to },
+      periodLabel: 'Current billing period',
+    })
     expect(resolveUsageWindow(90, period).key).toBe(90)
   })
 
-  it('falls back to the default without a billing period', () => {
-    expect(resolveUsageWindow(BILLING_PERIOD, null).key).toBe(DEFAULT_RANGE_DAYS)
+  it('falls back to the default without a period', () => {
+    expect(resolveUsageWindow(CURRENT_PERIOD, null).key).toBe(DEFAULT_RANGE_DAYS)
   })
 })
 
@@ -216,9 +222,7 @@ describe('buildUsageSeries', () => {
     expect(series.outOfWindow).toBe(1)
   })
 
-  // The invariant the range filter exists to hold, asserted directly rather than via a single
-  // total: anything that reaches the totals must also reach a bar, or the caption describes a
-  // wider window than the chart draws.
+  // Anything that reaches the totals must reach a bar, or the headline covers a wider window than the chart.
   it('keeps the window total equal to the sum of every plotted value', () => {
     const series = buildUsageSeries(
       [
@@ -259,10 +263,7 @@ describe('buildUsageSeries', () => {
     expect(series.projectTotals.map(p => p.projectId)).toEqual(['big', 'small'])
   })
 
-  // Names are deliberately inverted against ids here, so the assertion discriminates between the
-  // two possible tie-break keys instead of passing on either. It has to be the id: projectName
-  // returns an id fragment until projectsAtom fills, so a name-keyed sort reorders mid-page —
-  // which is the reload stability this is supposed to provide.
+  // Names sort opposite to ids, so only an id tie-break passes.
   it('breaks equal totals by project id, which is stable before names load', () => {
     const inverted = (id: string) => (id === 'zulu' ? 'Alpha Corp' : 'Zulu Corp')
     const series = buildUsageSeries(
@@ -278,8 +279,6 @@ describe('buildUsageSeries', () => {
     const daily = Array.from({ length: 8 }, (_, i) => cell('2026-08-01T00:00:00Z', `p${i}`, 100 - i))
     const series = buildUsageSeries(daily, range('2026-08-01T00:00:00Z', '2026-08-02T00:00:00Z'), named)
 
-    // Six charted series, then the folded band — so a row can find its own color without the
-    // caller re-deriving it from array position.
     expect(series.projectTotals.map(p => p.seriesIndex)).toEqual([0, 1, 2, 3, 4, 5, null, null])
   })
 
@@ -318,10 +317,8 @@ describe('buildUsageSeries', () => {
   })
 })
 
-// This is a metering surface, so a cell the page cannot read has to be counted rather than dropped:
-// dropped silently, a bad response understates the total, and a wholly bad one renders the "no
-// metered events" empty state — the page asserting zero usage while the server said otherwise.
-describe('buildUsageSeries — unreadable cells', () => {
+// Dropped silently, a bad cell understates the total, and a wholly bad response reads as no usage.
+describe('buildUsageSeries: unreadable cells', () => {
   it('counts a cell with no timestamp instead of dropping it silently', () => {
     const series = buildUsageSeries(
       [rawCell(undefined, 'a', 5_000_000), cell('2026-08-01T00:00:00Z', 'b', 10)],
@@ -340,16 +337,13 @@ describe('buildUsageSeries — unreadable cells', () => {
       named,
     )
 
-    // projectTotals is empty either way — `malformed` is the only thing separating "no events"
-    // from "we could not read the events".
+    // projectTotals is empty either way, so `malformed` is all that separates "no events" from "unreadable".
     expect(series.projectTotals).toEqual([])
     expect(series.malformed).toBe(1)
   })
 
   it('survives a timestamp too large to be a date, rather than throwing mid-render', () => {
-    // Seconds expressed in microseconds. protobuf-es returns an Invalid Date here instead of
-    // throwing, and an Invalid Date is truthy — so it passes a `!day` guard, defeats the range
-    // comparison (NaN is false both ways) and only blows up later, inside toISOString().
+    // protobuf-es returns a truthy Invalid Date here, which slips past a `!day` guard and throws in toISOString().
     const daily = [rawCell({ seconds: 1754006400000000n, nanos: 0 }, 'a', 7)]
 
     expect(() => buildUsageSeries(daily, range('2026-08-01T00:00:00Z', '2026-08-02T00:00:00Z'), named)).not.toThrow()
@@ -372,8 +366,6 @@ describe('buildUsageSeries — unreadable cells', () => {
   })
 
   it('refuses a cell with no project rather than bucketing it under a blank id', () => {
-    // proto3 defaults an omitted string to '', which is a usable Map key — every unattributed cell
-    // would otherwise collapse into one series and render as a project with a blank id.
     const series = buildUsageSeries(
       [cell('2026-08-01T00:00:00Z', '', 500), cell('2026-08-01T00:00:00Z', 'a', 10)],
       range('2026-08-01T00:00:00Z', '2026-08-02T00:00:00Z'),
@@ -385,9 +377,6 @@ describe('buildUsageSeries — unreadable cells', () => {
     expect(series.windowTotal).toBe(10)
   })
 
-  // Every other check here catches a defect that understates the total. This is the only one that
-  // would inflate it, which is why the repeat is refused outright rather than summed: a retried
-  // meter row would otherwise bill the org twice with nothing on screen to say so.
   it('refuses a repeated (project, day) cell instead of summing it', () => {
     const series = buildUsageSeries(
       [cell('2026-08-01T00:00:00Z', 'a', 100), cell('2026-08-01T00:00:00Z', 'a', 100)],
@@ -410,8 +399,6 @@ describe('buildUsageSeries — unreadable cells', () => {
     expect(series.malformed).toBe(0)
   })
 
-  // An out-of-window cell is not unreadable, so it is counted separately — but it must still be
-  // counted, or a response entirely outside the window renders as "no metered events".
   it('reports out-of-window cells rather than rendering them as no events at all', () => {
     const series = buildUsageSeries(
       [cell('2026-01-15T00:00:00Z', 'a', 1_000_000)],
@@ -453,9 +440,12 @@ describe('formatPeriod', () => {
     expect(label).toBe('Aug 1 – Aug 31, 2026')
   })
 
-  // Re-imported inside the zone: the formatters are built at import time, so this is the only way
-  // to construct them under a non-UTC zone. Drop the `timeZone: 'UTC'` pin in utcFormat and this
-  // goes red — the top-level import above stays green on a UTC runner either way.
+  it('gives the start its year when the window crosses one', () => {
+    const label = formatPeriod(new Date('2025-10-14T00:00:00Z'), new Date('2026-10-14T00:00:00Z'))
+    expect(label).toBe('Oct 14, 2025 – Oct 13, 2026')
+  })
+
+  // Re-imported inside the zone, since the formatters are built at import time.
   it('holds the UTC boundary west of UTC', async () => {
     await inZoneAsync(WESTERN, async () => {
       vi.resetModules()
