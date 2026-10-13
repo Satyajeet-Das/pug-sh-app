@@ -189,8 +189,7 @@ describe('loadBillingAtom', () => {
     expect(getBillingStatus).toHaveBeenCalledTimes(2)
   })
 
-  // The usage page already refuses it; gating here gives every surface the same answer.
-  it('refuses a negative total the way the usage page does', async () => {
+  it('refuses a negative total', async () => {
     getUsage.mockResolvedValue(usage(-5_000, true))
     const store = newStore()
     await store.set(loadBillingAtom)
@@ -212,8 +211,7 @@ describe('loadBillingAtom', () => {
     expect(result.error).toBeNull()
   })
 
-  // The usage page names this state 'unreadable'. Collapsed into the not-counted branch it reads as
-  // the benign "Not measured yet", and nobody ever finds out.
+  // Folded into not-counted, a negative total reads as the benign "Not measured yet" and nobody finds out.
   it('calls a negative total a meter failure, not an uncounted period', async () => {
     const store = newStore()
     getBillingStatus.mockResolvedValue(status('growth'))
