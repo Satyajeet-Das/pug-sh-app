@@ -14,12 +14,19 @@ describe('parseReference', () => {
     expect(parseReference(value)).toEqual(expected)
   })
 
-  it.each(['', '#dark', 'pug#dim', 'pug#', 'Pug', 'http://themes.pug.sh/t.json', `https://x/${'a'.repeat(2048)}`])(
-    'refuses %j',
-    value => {
-      expect(parseReference(value)).toBeNull()
-    },
-  )
+  it.each([
+    '',
+    '#dark',
+    'pug#dim',
+    'pug#',
+    'Pug',
+    'http://themes.pug.sh/t.json',
+    `https://x/${'a'.repeat(2048)}`,
+    // The server's rule takes any five-digit port; the URL parser refuses one past 65535.
+    'https://themes.pug.sh:99999/t.json',
+  ])('refuses %j', value => {
+    expect(parseReference(value)).toBeNull()
+  })
 
   it('round-trips through formatReference', () => {
     for (const value of ['pug', 'pug#light', `${LINEN}#dark`]) {

@@ -247,6 +247,14 @@ describe('the default theme', () => {
     expect(store.get(projectsAtom)[0].defaultTheme).toBe('pug-colourblind#dark')
   })
 
+  // Review Focus 5: stored through the API, a reference the URL parser refuses is unreadable here, never a
+  // crash, and the admin can still clear it.
+  it('renders a default it can’t read, and offers to clear it', () => {
+    mountWith(OrgRole.ADMIN, 'https://themes.pug.sh:99999/t.json')
+    expect(screen.getByText('No default. Members see their own theme.')).toBeTruthy()
+    expect(screen.getByRole('button', { name: 'Clear default' })).toBeTruthy()
+  })
+
   // Review Focus 4: the page says why, and the workspace keeps what it had.
   it('keeps the project as it was when the save is refused', async () => {
     const toastError = vi.spyOn(toast, 'error').mockImplementation(() => '')

@@ -18,6 +18,18 @@ const ID = /^[a-z0-9-]{1,64}$/
 
 export const isUrlTarget = (target: string) => target.startsWith('https://')
 
+// The URL parser has the last word on a URL target. The server's rule can't mirror it — it takes any
+// five-digit port — and every reader of a reference has to agree on which ones are usable.
+const parsesAsHttps = (target: string) => {
+  try {
+    return new URL(target).protocol === 'https:'
+  } catch {
+    return false
+  }
+}
+
+const isTarget = (target: string) => (isUrlTarget(target) ? parsesAsHttps(target) : ID.test(target))
+
 /**
  * Splits a reference at its first '#'. In a URL an unencoded '#' can only begin the fragment, so one
  * rule serves both kinds of target. Null for an empty string, or anything that isn't a reference.
@@ -26,7 +38,7 @@ export const parseReference = (value: string): ThemeReference | null => {
   if (value.length === 0 || value.length > MAX_REFERENCE_LENGTH) return null
   const at = value.indexOf('#')
   const target = at === -1 ? value : value.slice(0, at)
-  if (!isUrlTarget(target) && !ID.test(target)) return null
+  if (!isTarget(target)) return null
   if (at === -1) return { target }
   const pin = value.slice(at + 1)
   if (pin !== 'light' && pin !== 'dark') return null
