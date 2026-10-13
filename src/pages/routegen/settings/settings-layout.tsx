@@ -13,7 +13,7 @@ import { cn } from '@/lib/utils'
 // Grouped by scope: project, then organization, then you. Not every tab scopes to the project URL it
 // is reached through, so each carries its own description.
 const SETTINGS_TABS = [
-  { path: 'general', label: 'General', description: 'Name and timezone for this project' },
+  { path: 'general', label: 'General', description: 'Name, timezone and theme for this project' },
   { path: 'api-keys', label: 'API keys', description: 'SDK keys for this project' },
   { path: 'organization', label: 'Organization', description: 'Organizations you belong to' },
   { path: 'sso', label: 'SSO & domains', description: 'Verified domains and who joins this organization' },

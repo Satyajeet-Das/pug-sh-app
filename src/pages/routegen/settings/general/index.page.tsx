@@ -14,6 +14,7 @@ import { Input } from '@/components/ui/input'
 import { activeProjectAtom, projectHeaderAtom } from '@/data/workspace.atoms'
 import { toastRPCError } from '@/lib/rpc-error'
 import { browserTimezone } from '@/lib/timezone'
+import DefaultTheme from './default-theme'
 import { DeleteProject } from './delete-project'
 import { TimezonePicker } from './timezone-picker'
 
@@ -171,6 +172,7 @@ const General = () => {
           </Can>
         </section>
       )}
+      {project && <DefaultTheme />}
     </div>
   )
 }
