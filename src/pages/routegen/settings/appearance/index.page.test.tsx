@@ -77,7 +77,7 @@ describe('Settings → Appearance', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Grape' }))
     const id = store.get(installedThemesAtom)[0].id
     expect(store.get(themeSelectionAtom)).toEqual({ light: 'pug', dark: id })
-    expect(trackEvent).toHaveBeenCalledWith('theme_selected', { theme: 'custom', mode: 'dark' })
+    expect(trackEvent).toHaveBeenCalledWith('theme_selected', { theme: 'custom', mode: 'dark', scope: 'personal' })
   })
 
   it('refuses a file that is not a theme', async () => {
