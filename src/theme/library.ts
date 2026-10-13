@@ -1,12 +1,14 @@
 import { BUILTIN_IDS, BUILTINS, type BuiltinId } from './builtin'
 import { compileVariant, hashString } from './compile'
-import { error, type Issue, parseThemeText, readableName, type ThemeFamily } from './format'
+import { error, type Issue, type ParseResult, parseThemeText, readableName, type ThemeFamily } from './format'
 import { memoize } from './memoize'
+import { isUrlTarget } from './reference'
 import { POLARITIES, type Polarity } from './tokens'
 
-// The theme library: the built-ins plus whatever the person installed, and which one is active.
-// Installed themes are stored as their original text and re-parsed on load, so a registry change
-// between releases (a token this build learned) applies to themes installed before it.
+// The theme library: the built-ins, whatever the person installed, and the theme files fetched by URL
+// for a project — and which one is active. Installed and fetched themes are kept as their original text
+// and re-parsed on load, so a registry change between releases (a token this build learned) applies to
+// themes kept before it.
 
 export const MAX_INSTALLED = 20
 
@@ -14,19 +16,28 @@ export const MAX_INSTALLED = 20
 export type InstalledId = `installed-${string}`
 export const isInstalledId = (id: unknown): id is InstalledId => typeof id === 'string' && id.startsWith('installed-')
 
+// A fetched file's id is its URL, which can't collide with either.
+export type RemoteId = `https://${string}`
+export const isRemoteId = (id: unknown): id is RemoteId => typeof id === 'string' && isUrlTarget(id)
+
 export type InstalledTheme = { id: InstalledId; text: string; hash: string; installedAt: number; source: 'file' }
 
 type EntryInfo = { name: string; author?: string; issues: Issue[] }
 
 export type LibraryEntry =
   | (EntryInfo & { id: BuiltinId; builtin: true; family: ThemeFamily })
-  // family is null when an installed theme can't be used — it no longer parses, or it has an error.
-  // It stays in the list, but can't be selected.
-  | (EntryInfo & { id: InstalledId; builtin: false; family: ThemeFamily | null })
+  // family is null when an installed or fetched theme can't be used — it no longer parses, or it has an
+  // error. It stays in the list, but can't be selected.
+  | (EntryInfo & { id: InstalledId | RemoteId; builtin: false; family: ThemeFamily | null })
 
 export type UsableEntry = LibraryEntry & { family: ThemeFamily }
 
-const parseOnce = memoize(parseThemeText)
+// Installed texts parse once per text: no two installed themes share one, since installs refuse a
+// duplicate. A fetched file parses once per URL and text, so the same file served from two URLs, or also
+// installed, still gets a family object per id. compileOnce keys on the family alone, trusting that it
+// only ever arrives with its own id. A URL can't contain a newline, so it separates the two.
+const parseInstalledOnce = memoize(parseThemeText)
+const parseFetchedOnce = memoize((key: string) => parseThemeText(key.slice(key.indexOf('\n') + 1)))
 
 /** Validation issues for every variant a family has, with paths that say which variant. */
 const validateFamily = (id: string, family: ThemeFamily): Issue[] =>
@@ -53,48 +64,58 @@ const eventsByKey = (key: string, value: unknown) => {
  */
 export const familyHash = (family: ThemeFamily) => hashString(JSON.stringify(family, eventsByKey))
 
-// An installed theme that can't be used: listed, never selectable, named from its text if possible.
-const unusable = (theme: InstalledTheme, issues: Issue[]): LibraryEntry => ({
-  id: theme.id,
+export type TextCheck =
+  | { ok: true; family: ThemeFamily; issues: Issue[]; hash: string }
+  | { ok: false; issues: Issue[] }
+
+/** Parses and validates a theme file's text, for an install or a fetch: errors make it unusable. */
+export const checkThemeText = (text: string): TextCheck => {
+  const parsed = parseThemeText(text)
+  if (!parsed.ok) return { ok: false, issues: parsed.issues }
+  const issues = [...parsed.issues, ...validateFamily('candidate', parsed.family)]
+  if (issues.some(i => i.severity === 'error')) return { ok: false, issues }
+  return { ok: true, family: parsed.family, issues, hash: familyHash(parsed.family) }
+}
+
+// A theme kept as text that can't be used: listed, never selectable, named from its text if possible.
+const unusable = (id: InstalledId | RemoteId, text: string, issues: Issue[]): LibraryEntry => ({
+  id,
   builtin: false,
-  name: readableName(theme.text) ?? 'Unreadable theme',
+  name: readableName(text) ?? 'Unreadable theme',
   family: null,
   issues,
 })
 
-const installedEntry = (theme: InstalledTheme): LibraryEntry => {
+const textEntry = (id: InstalledId | RemoteId, text: string, parse: () => ParseResult): LibraryEntry => {
   try {
-    const parsed = parseOnce(theme.text)
+    const parsed = parse()
     if (!parsed.ok) {
-      // It parsed when it was installed, so this build reads it differently — a stricter rule, or a
+      // It parsed when it was kept, so this build reads it differently — a stricter rule, or a
       // rollback past its version. Its modes fall back to Pug; keep a trace of why.
-      console.warn('theme library: could not read', theme.id, parsed.issues)
-      return unusable(theme, parsed.issues)
+      console.warn('theme library: could not read', id, parsed.issues)
+      return unusable(id, text, parsed.issues)
     }
     const { family } = parsed
-    const issues = [...parsed.issues, ...validateFamily(theme.id, family)]
+    const issues = [...parsed.issues, ...validateFamily(id, family)]
     const usable = !issues.some(i => i.severity === 'error')
-    return {
-      id: theme.id,
-      builtin: false,
-      name: family.name,
-      author: family.author,
-      family: usable ? family : null,
-      issues,
-    }
+    return { id, builtin: false, name: family.name, author: family.author, family: usable ? family : null, issues }
   } catch (err) {
     // A theme the engine can't parse or compile is a bug in the engine, not the file — but it must not
     // take the app down with it, since App reads the library while rendering. It stays listed,
     // unselectable, and its mode falls back to Pug.
-    console.error('theme library: could not compile', theme.id, err)
-    return unusable(theme, [error('V13', '', 'This theme couldn’t be compiled')])
+    console.error('theme library: could not compile', id, err)
+    return unusable(id, text, [error('V13', '', 'This theme couldn’t be compiled')])
   }
 }
 
 export const buildLibrary = (installed: InstalledTheme[]): LibraryEntry[] => [
   ...BUILTIN_IDS.map(id => ({ id, builtin: true as const, name: BUILTINS[id].name, family: BUILTINS[id], issues: [] })),
-  ...installed.map(installedEntry),
+  ...installed.map(theme => textEntry(theme.id, theme.text, () => parseInstalledOnce(theme.text))),
 ]
+
+/** Theme files fetched by URL — each as its last validated text — as library entries keyed by URL. */
+export const remoteEntries = (fetched: { url: RemoteId; text: string }[]): LibraryEntry[] =>
+  fetched.map(({ url, text }) => textEntry(url, text, () => parseFetchedOnce(`${url}\n${text}`)))
 
 export type ActiveTheme = { id: string; builtin: boolean; family: ThemeFamily; polarity: Polarity }
 
@@ -130,13 +151,11 @@ export type InstallCheck =
 
 /** Everything the install flow needs to know about a file, without installing it. */
 export const checkInstall = (text: string, installed: InstalledTheme[], now = Date.now()): InstallCheck => {
-  const parsed = parseThemeText(text)
-  if (!parsed.ok) return { ok: false, reason: 'invalid', issues: parsed.issues }
-  const issues = [...parsed.issues, ...validateFamily('candidate', parsed.family)]
-  if (issues.some(i => i.severity === 'error')) return { ok: false, reason: 'invalid', issues }
-  const hash = familyHash(parsed.family)
+  const check = checkThemeText(text)
+  if (!check.ok) return { ok: false, reason: 'invalid', issues: check.issues }
+  const { hash, issues } = check
   if (installed.some(t => t.hash === hash)) return { ok: false, reason: 'duplicate', issues }
   if (installed.length >= MAX_INSTALLED) return { ok: false, reason: 'full', issues }
   const theme: InstalledTheme = { id: `installed-${hash}`, text, hash, installedAt: now, source: 'file' }
-  return { ok: true, theme, name: parsed.family.name, issues }
+  return { ok: true, theme, name: check.family.name, issues }
 }

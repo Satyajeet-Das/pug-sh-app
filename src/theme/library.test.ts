@@ -1,5 +1,13 @@
 import { describe, expect, it, vi } from 'vitest'
-import { buildLibrary, checkInstall, chooseActive, type InstalledTheme, MAX_INSTALLED } from './library'
+import {
+  buildLibrary,
+  checkInstall,
+  checkThemeText,
+  chooseActive,
+  type InstalledTheme,
+  MAX_INSTALLED,
+  remoteEntries,
+} from './library'
 
 const grape: InstalledTheme = {
   id: 'installed-grape' as const,
@@ -182,5 +190,46 @@ describe('checkInstall', () => {
     const check = checkInstall(muddy, [])
     expect(check.ok).toBe(true)
     expect(check.issues.some(i => i.rule === 'V2' && i.path.startsWith('variants.light.'))).toBe(true)
+  })
+})
+
+describe('checkThemeText', () => {
+  it('passes a clean file with its hash, and fails one with errors', () => {
+    const clean = checkThemeText(grape.text)
+    expect(clean).toMatchObject({ ok: true, issues: [] })
+    if (clean.ok) expect(clean.hash).toMatch(/^[0-9a-f]{8}$/)
+    expect(checkThemeText('{"version":1}')).toMatchObject({ ok: false })
+  })
+})
+
+describe('remoteEntries', () => {
+  const url = 'https://themes.pug.sh/grape/theme.json' as const
+
+  it('keys a fetched file by its URL, usable when it validates', () => {
+    const [entry] = remoteEntries([{ url, text: grape.text }])
+    expect(entry).toMatchObject({ id: url, builtin: false, name: 'Grape' })
+    expect(entry.family).not.toBeNull()
+  })
+
+  it('keeps one that no longer reads listed, but unusable', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const [entry] = remoteEntries([{ url, text: '{' }])
+    expect(entry.family).toBeNull()
+  })
+
+  // compileOnce keys on the family object alone, so a fetched file must not share one with an identical
+  // installed file — the compiled theme would carry the wrong id.
+  it('parses a fetched file apart from an identical installed one', () => {
+    const [remote] = remoteEntries([{ url, text: grape.text }])
+    const installed = buildLibrary([grape]).find(entry => entry.id === grape.id)
+    expect(remote.family).not.toBe(installed?.family)
+  })
+
+  it('gives the same file fetched from two URLs a family each', () => {
+    const [a, b] = remoteEntries([
+      { url, text: grape.text },
+      { url: 'https://cdn.example.com/grape.json', text: grape.text },
+    ])
+    expect(a.family).not.toBe(b.family)
   })
 })
