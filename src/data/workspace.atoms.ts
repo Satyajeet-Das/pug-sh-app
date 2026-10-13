@@ -2,7 +2,7 @@ import { isFieldSet } from '@bufbuild/protobuf'
 import { Code, ConnectError } from '@connectrpc/connect'
 import { atom } from 'jotai'
 import { atomWithStorage } from 'jotai/utils'
-import { trackFeature } from '@/analytics/pug'
+import { trackEvent, trackFeature } from '@/analytics/pug'
 import { type ListResponse, ListResponseSchema, type Org } from '@/api/genproto/dashboard/orgs/v1/orgs_pb'
 import type { Project } from '@/api/genproto/dashboard/projects/v1/projects_pb'
 import { orgsRPCAtom, projectsRPCAtom } from '@/api/rpc'
@@ -378,6 +378,29 @@ export const projectHeaderAtom = atom(get => {
   const project = get(activeProjectAtom)
   if (!project) return undefined
   return { 'x-project-id': project.id }
+})
+
+/**
+ * Sets the active project's default theme, as a theme reference ('' clears it), and puts the stored
+ * project back into the workspace, so switching away and back keeps it. Sends only default_theme:
+ * UpdateMeta is a partial update, and resending the name could overwrite a newer one. A refusal is
+ * rethrown for the caller to report, and changes nothing.
+ */
+export const saveProjectThemeAtom = atom(null, async (get, set, reference: string) => {
+  const project = get(activeProjectAtom)
+  const headers = get(projectHeaderAtom)
+  if (!project || !headers) return
+  const resp = await get(projectsRPCAtom).updateMeta({ defaultTheme: reference }, { headers })
+  const saved = resp.project ?? { ...project, defaultTheme: reference }
+  if (get(activeProjectAtom)?.id === saved.id) set(activeProjectAtom, saved)
+  set(
+    projectsAtom,
+    get(projectsAtom).map(p => (p.id === saved.id ? saved : p)),
+  )
+  let kind = 'builtin'
+  if (reference === '') kind = 'cleared'
+  else if (reference.startsWith('https://')) kind = 'url'
+  trackEvent('project_theme_set', { kind, pinned: reference.includes('#') })
 })
 
 // The project's reporting timezone, used to render bucketed insight/dashboard

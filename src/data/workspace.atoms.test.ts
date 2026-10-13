@@ -5,21 +5,23 @@ import { ListResponseSchema, OrgSchema } from '@/api/genproto/dashboard/orgs/v1/
 import { ProjectSchema } from '@/api/genproto/dashboard/projects/v1/projects_pb'
 import { jwtFor } from '@/test/jwt'
 
-const { batchGet, projectsCreate, projectsDelete, orgsList, orgsGet, orgsUpdateDisplayName } = vi.hoisted(() => ({
-  batchGet: vi.fn(),
-  projectsCreate: vi.fn(),
-  projectsDelete: vi.fn(),
-  orgsList: vi.fn(),
-  orgsGet: vi.fn(),
-  orgsUpdateDisplayName: vi.fn(),
-}))
+const { batchGet, projectsCreate, projectsDelete, projectsUpdateMeta, orgsList, orgsGet, orgsUpdateDisplayName } =
+  vi.hoisted(() => ({
+    batchGet: vi.fn(),
+    projectsCreate: vi.fn(),
+    projectsDelete: vi.fn(),
+    projectsUpdateMeta: vi.fn(),
+    orgsList: vi.fn(),
+    orgsGet: vi.fn(),
+    orgsUpdateDisplayName: vi.fn(),
+  }))
 
 // The RPC atoms build real ConnectRPC clients over the app's transport at read time. Swap the two
 // this module reads for hand-held fakes, so a test can decide when — and whether — a call resolves.
 vi.mock('@/api/rpc', async () => {
   const { atom } = await import('jotai')
   return {
-    projectsRPCAtom: atom({ batchGet, create: projectsCreate, delete: projectsDelete }),
+    projectsRPCAtom: atom({ batchGet, create: projectsCreate, delete: projectsDelete, updateMeta: projectsUpdateMeta }),
     orgsRPCAtom: atom({ list: orgsList, get: orgsGet, updateDisplayName: orgsUpdateDisplayName }),
   }
 })
@@ -49,10 +51,12 @@ const {
   refreshOrgsAtom,
   renameOrgAtom,
   resetWorkspaceAtom,
+  saveProjectThemeAtom,
   selectOrgAtom,
   workspaceErrorAtom,
   workspaceSettledAtom,
 } = await import('./workspace.atoms')
+const { trackEvent } = await import('@/analytics/pug')
 
 const org = (id: string) => create(OrgSchema, { id, displayName: id })
 const project = (id: string) => create(ProjectSchema, { id, displayName: id })
@@ -423,5 +427,67 @@ describe('lastProjectByOrgAtom', () => {
       customerId: 'cust-1',
       byOrg: { 'org-a': 'a1' },
     })
+  })
+})
+
+describe('saveProjectThemeAtom', () => {
+  const one = create(ProjectSchema, { id: 'p1', displayName: 'One', orgId: 'org-a' })
+  const two = create(ProjectSchema, { id: 'p2', displayName: 'Two', orgId: 'org-a' })
+  const inOne = () => {
+    const store = createStore()
+    store.set(projectsAtom, [one, two])
+    store.set(activeProjectAtom, one)
+    return store
+  }
+
+  beforeEach(() => vi.mocked(trackEvent).mockClear())
+
+  // Only default_theme goes out: UpdateMeta is a partial update, and resending the name could overwrite
+  // one an admin just changed elsewhere. What comes back is the stored project, renamed or not.
+  it('sends only default_theme and puts the stored project back into the workspace', async () => {
+    const stored = create(ProjectSchema, {
+      id: 'p1',
+      displayName: 'One, renamed',
+      orgId: 'org-a',
+      defaultTheme: 'pug#dark',
+    })
+    projectsUpdateMeta.mockResolvedValue({ project: stored })
+    const store = inOne()
+    await store.set(saveProjectThemeAtom, 'pug#dark')
+    expect(projectsUpdateMeta).toHaveBeenCalledWith({ defaultTheme: 'pug#dark' }, { headers: { 'x-project-id': 'p1' } })
+    expect(store.get(activeProjectAtom)).toBe(stored)
+    expect(store.get(projectsAtom)).toEqual([stored, two])
+    expect(trackEvent).toHaveBeenCalledWith('project_theme_set', { kind: 'builtin', pinned: true })
+  })
+
+  it('reports a URL or a clear by kind, never the value', async () => {
+    projectsUpdateMeta.mockResolvedValue({})
+    const store = inOne()
+    await store.set(saveProjectThemeAtom, 'https://themes.pug.sh/linen/theme.json')
+    expect(trackEvent).toHaveBeenLastCalledWith('project_theme_set', { kind: 'url', pinned: false })
+    await store.set(saveProjectThemeAtom, '')
+    expect(trackEvent).toHaveBeenLastCalledWith('project_theme_set', { kind: 'cleared', pinned: false })
+  })
+
+  it('leaves a project switched to meanwhile as it is', async () => {
+    let answer: (value: unknown) => void = () => {}
+    projectsUpdateMeta.mockReturnValue(new Promise(resolve => (answer = resolve)))
+    const store = inOne()
+    const saving = store.set(saveProjectThemeAtom, 'pug')
+    store.set(activeProjectAtom, two)
+    answer({ project: create(ProjectSchema, { id: 'p1', displayName: 'One', orgId: 'org-a', defaultTheme: 'pug' }) })
+    await saving
+    expect(store.get(activeProjectAtom)).toBe(two)
+    expect(store.get(projectsAtom)[0].defaultTheme).toBe('pug')
+  })
+
+  // Review Focus 4: a refusal changes nothing here, and reaches the caller to report.
+  it('rethrows a refusal and changes nothing', async () => {
+    projectsUpdateMeta.mockRejectedValue(new Error('refused'))
+    const store = inOne()
+    await expect(store.set(saveProjectThemeAtom, 'pug')).rejects.toThrow('refused')
+    expect(store.get(activeProjectAtom)).toBe(one)
+    expect(store.get(projectsAtom)).toEqual([one, two])
+    expect(trackEvent).not.toHaveBeenCalled()
   })
 })
