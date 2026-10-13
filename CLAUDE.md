@@ -363,7 +363,7 @@ Colours are data. A theme is a file in format v1 (`src/theme/format.ts`; JSON Sc
   - Only versions that validate are kept, in `pug:theme-remote`: 10 files, the least recently fetched dropped first. A broken push or a dead host keeps the last good copy.
   - That cache keeps its copy in memory even when storage refuses the write.
 - **First paint is per project.**
-  - `pug:theme-paint` v2 holds one paint per project (the 10 most recent, plus `last` for `/`) and the member's own.
+  - `pug:theme-paint` v2 holds one paint per project with a theme of its own, an override or a default (the 10 most recent, plus `last` for `/`), and the member's own. A project on the member's own gets no entry, so it follows their choice when they change it from another project.
   - `index.html` reads the project from the path.
   - React leaves that paint alone until the workspace has picked its project: `ThemeApplier` waits on `workspaceSettledAtom`, or the member's own theme would flash in between. `theme-applier.test.tsx` runs the real script into App.
   - A v1 cache reads as the member's own.

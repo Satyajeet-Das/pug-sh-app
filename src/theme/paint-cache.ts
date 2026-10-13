@@ -3,10 +3,10 @@ import { compileOnce } from './compile'
 import { chooseActive, type LibraryEntry } from './library'
 import { POLARITIES, type Polarity } from './tokens'
 
-// What the index.html script paints before React loads: per project, since projects can look different,
-// plus the member's own for everything else. Both modes are cached because the OS can flip between
-// visits. Keep the key, the shape and the auto-contrast rule in sync with that script —
-// paint-script.test.ts runs the real one against this output.
+// What the index.html script paints before React loads: each project with a theme of its own, plus the
+// member's own for everything else. Both modes are cached because the OS can flip between visits. Keep the
+// key, the shape and the auto-contrast rule in sync with that script — paint-script.test.ts runs the real
+// one against this output.
 
 export const PAINT_CACHE_KEY = 'pug:theme-paint'
 
@@ -20,9 +20,9 @@ export type ProjectPaint = ModePaints & { pin?: Polarity }
 export type PaintCache = {
   v: 2
   autoContrast: boolean
-  /** The project painted most recently: what `/` paints, since it redirects there. */
+  /** The project visited most recently, while it has a theme of its own: what `/` paints, since it redirects there. */
   last?: string
-  /** The member's own choice: pages outside a project, and projects not cached yet. */
+  /** The member's own choice: pages outside a project, projects on it, and projects not cached yet. */
   personal: ModePaints
   projects: Record<string, ProjectPaint>
 }
@@ -71,12 +71,16 @@ export const buildPaintCache = (input: {
   const projects = { ...input.previous?.projects }
   let last = input.previous?.last
   if (input.projectId) {
-    const paint: ProjectPaint = paintsFor(input.choice.selection, input.library)
-    if (input.choice.pin) paint.pin = input.choice.pin
     // Re-inserted so it moves to the end: key order is the recency the trim below reads. Project ids
     // are 20-character xids, never integer-like keys that objects would sort first.
     delete projects[input.projectId]
-    projects[input.projectId] = paint
+    // A project on the member's own theme gets no entry: the script paints `personal` there, which
+    // follows their choice wherever they change it. An entry would keep the theme it had at the time.
+    if (input.choice.source !== 'personal') {
+      const paint: ProjectPaint = paintsFor(input.choice.selection, input.library)
+      if (input.choice.pin) paint.pin = input.choice.pin
+      projects[input.projectId] = paint
+    }
     last = input.projectId
   }
   const kept = Object.fromEntries(Object.entries(projects).slice(-MAX_PAINTED_PROJECTS))

@@ -13,6 +13,7 @@ const grape: InstalledTheme = {
 const library = buildLibrary([grape])
 const own = { light: 'pug', dark: 'pug' }
 const personal = { selection: own, source: 'personal' as const }
+const colourblind = { selection: { light: 'pug-colourblind', dark: 'pug-colourblind' }, source: 'project' as const }
 
 describe('buildPaintCache', () => {
   it('names built-ins and carries an installed theme as variables', () => {
@@ -43,13 +44,36 @@ describe('buildPaintCache', () => {
     expect(cache.projects.p1).toMatchObject({ pin: 'dark', dark: { builtin: 'pug-colourblind', standard: true } })
   })
 
+  // The script paints the member's own for a project with no entry, which stays right when they change it
+  // from another project. An entry would freeze the old one, and the next load there would flash.
+  it('keeps no entry for a project on the member’s own theme, nor names it last', () => {
+    const before = buildPaintCache({
+      previous: null,
+      projectId: 'p1',
+      choice: colourblind,
+      personal: own,
+      autoContrast: true,
+      library,
+    })
+    const cache = buildPaintCache({
+      previous: before,
+      projectId: 'p1',
+      choice: personal,
+      personal: own,
+      autoContrast: true,
+      library,
+    })
+    expect(cache.projects).toEqual({})
+    expect(cache.last).toBeUndefined()
+  })
+
   it('keeps other projects, most recent last, up to the limit', () => {
     let cache: ReturnType<typeof buildPaintCache> | null = null
     for (let i = 0; i <= MAX_PAINTED_PROJECTS; i++) {
       cache = buildPaintCache({
         previous: cache,
         projectId: `p${i}`,
-        choice: personal,
+        choice: colourblind,
         personal: own,
         autoContrast: true,
         library,
