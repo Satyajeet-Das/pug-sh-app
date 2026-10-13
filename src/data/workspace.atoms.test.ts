@@ -1,8 +1,10 @@
 import { create } from '@bufbuild/protobuf'
+import { ConnectError } from '@connectrpc/connect'
 import { createStore } from 'jotai'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ListResponseSchema, OrgSchema } from '@/api/genproto/dashboard/orgs/v1/orgs_pb'
 import { ProjectSchema } from '@/api/genproto/dashboard/projects/v1/projects_pb'
+import { rpcErrorMessage } from '@/lib/rpc-error'
 import { jwtFor } from '@/test/jwt'
 
 const { batchGet, projectsCreate, projectsDelete, projectsUpdateMeta, orgsList, orgsGet, orgsUpdateDisplayName } =
@@ -467,6 +469,19 @@ describe('saveProjectThemeAtom', () => {
     expect(trackEvent).toHaveBeenLastCalledWith('project_theme_set', { kind: 'url', pinned: false })
     await store.set(saveProjectThemeAtom, '')
     expect(trackEvent).toHaveBeenLastCalledWith('project_theme_set', { kind: 'cleared', pinned: false })
+  })
+
+  // What the transport's own proto check throws for this: Code.Unknown, which rpcErrorMessage reads as "use
+  // the caller's wording", so the page could only say the save failed. The reason has to survive.
+  it('refuses a reference the server won’t store, saying why, without sending it', async () => {
+    projectsUpdateMeta.mockRejectedValue(
+      new ConnectError('default_theme: the host can’t be localhost or an IP address'),
+    )
+    const store = inOne()
+    const refused = await store.set(saveProjectThemeAtom, 'https://localhost:8443/theme.json').catch(err => err)
+    expect(rpcErrorMessage(refused, 'fallback')).toMatch(/localhost or an IP address/)
+    expect(projectsUpdateMeta).not.toHaveBeenCalled()
+    expect(store.get(activeProjectAtom)).toBe(one)
   })
 
   it('leaves a project switched to meanwhile as it is', async () => {

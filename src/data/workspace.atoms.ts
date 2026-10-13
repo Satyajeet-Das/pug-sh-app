@@ -1,10 +1,11 @@
-import { isFieldSet } from '@bufbuild/protobuf'
+import { create, isFieldSet } from '@bufbuild/protobuf'
+import { createValidator } from '@bufbuild/protovalidate'
 import { Code, ConnectError } from '@connectrpc/connect'
 import { atom } from 'jotai'
 import { atomWithStorage } from 'jotai/utils'
 import { trackEvent, trackFeature } from '@/analytics/pug'
 import { type ListResponse, ListResponseSchema, type Org } from '@/api/genproto/dashboard/orgs/v1/orgs_pb'
-import type { Project } from '@/api/genproto/dashboard/projects/v1/projects_pb'
+import { type Project, UpdateMetaRequestSchema } from '@/api/genproto/dashboard/projects/v1/projects_pb'
 import { orgsRPCAtom, projectsRPCAtom } from '@/api/rpc'
 import { customerIdAtom } from '@/auth/jwt.atoms'
 import { browserTimezone } from '@/lib/timezone'
@@ -386,10 +387,23 @@ export const projectHeaderAtom = atom(get => {
  * UpdateMeta is a partial update, and resending the name could overwrite a newer one. A refusal is
  * rethrown for the caller to report, and changes nothing.
  */
+// The transport checks every request against its proto rules as well, but refuses with Code.Unknown, which
+// rpcErrorMessage reads as "use the caller's wording". A reference's rules are the whole reason a save is
+// refused, so the save checks first and refuses the way the server would, keeping the reason.
+const requestValidator = createValidator()
+
 export const saveProjectThemeAtom = atom(null, async (get, set, reference: string) => {
   const project = get(activeProjectAtom)
   const headers = get(projectHeaderAtom)
   if (!project || !headers) return
+  const checked = requestValidator.validate(
+    UpdateMetaRequestSchema,
+    create(UpdateMetaRequestSchema, { defaultTheme: reference }),
+  )
+  if (checked.kind === 'invalid') {
+    const reason = checked.violations.map(v => v.message).join('; ')
+    throw new ConnectError(`${reason.charAt(0).toUpperCase()}${reason.slice(1)}.`, Code.InvalidArgument)
+  }
   const resp = await get(projectsRPCAtom).updateMeta({ defaultTheme: reference }, { headers })
   const saved = resp.project ?? { ...project, defaultTheme: reference }
   if (get(activeProjectAtom)?.id === saved.id) set(activeProjectAtom, saved)
