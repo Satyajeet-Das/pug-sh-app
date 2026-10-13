@@ -138,6 +138,19 @@ describe('checkInstall', () => {
     expect(checkInstall(grape.text, full)).toMatchObject({ ok: false, reason: 'full' })
   })
 
+  // The hash followed the file's order of event colours, so the same theme with two of them swapped
+  // installed as a second copy.
+  it('treats a file with its event colours reordered as already installed', () => {
+    const file = (events: Record<string, string>) =>
+      JSON.stringify({ version: 1, name: 'Ev', variants: { dark: { data: { events } } } })
+    const first = checkInstall(file({ page_view: '#8be9fd', signin: '#50fa7b' }), [])
+    if (!first.ok) throw new Error(JSON.stringify(first.issues))
+    expect(checkInstall(file({ signin: '#50fa7b', page_view: '#8be9fd' }), [first.theme])).toMatchObject({
+      ok: false,
+      reason: 'duplicate',
+    })
+  })
+
   // A button fill at 10% opacity measured 4.7:1 against itself as if it were solid; its text
   // renders at about 1.1:1. It used to install and read "Passed".
   it('refuses a see-through fill', () => {

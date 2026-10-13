@@ -91,7 +91,8 @@ const EVENT_ALIASES: Record<string, string> = {
  */
 export const resolveKind = (name: string): string => {
   const normalized = normalize(name)
-  return EVENT_ALIASES[normalized] ?? normalized
+  // Own keys only: "constructor" would otherwise resolve to Object.prototype's function.
+  return Object.hasOwn(EVENT_ALIASES, normalized) ? EVENT_ALIASES[normalized] : normalized
 }
 
 if (import.meta.env.DEV) {

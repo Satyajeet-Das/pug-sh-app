@@ -39,6 +39,20 @@ const validateFamily = (id: string, family: ThemeFamily): Issue[] =>
       : [],
   )
 
+// Event colours by key, whatever order the file listed them in. An object's own keys are unique, so the
+// comparison never sees a tie.
+const byKey = ([a]: [string, unknown], [b]: [string, unknown]) => (a < b ? -1 : 1)
+const eventsByKey = (key: string, value: unknown) => {
+  if (key !== 'events' || typeof value !== 'object' || value === null) return value
+  return Object.fromEntries(Object.entries(value).sort(byKey))
+}
+
+/**
+ * A family's identity, for "already installed" and for "changed since it was fetched": its parsed form,
+ * so whitespace, key order and the order of event colours don't make it a different theme.
+ */
+export const familyHash = (family: ThemeFamily) => hashString(JSON.stringify(family, eventsByKey))
+
 // An installed theme that can't be used: listed, never selectable, named from its text if possible.
 const unusable = (theme: InstalledTheme, issues: Issue[]): LibraryEntry => ({
   id: theme.id,
@@ -120,9 +134,7 @@ export const checkInstall = (text: string, installed: InstalledTheme[], now = Da
   if (!parsed.ok) return { ok: false, reason: 'invalid', issues: parsed.issues }
   const issues = [...parsed.issues, ...validateFamily('candidate', parsed.family)]
   if (issues.some(i => i.severity === 'error')) return { ok: false, reason: 'invalid', issues }
-  // Hashed on the parsed family, so whitespace and the order of most keys don't make a second copy.
-  // Event colours keep the file's order, so a copy with them reordered still does.
-  const hash = hashString(JSON.stringify(parsed.family))
+  const hash = familyHash(parsed.family)
   if (installed.some(t => t.hash === hash)) return { ok: false, reason: 'duplicate', issues }
   if (installed.length >= MAX_INSTALLED) return { ok: false, reason: 'full', issues }
   const theme: InstalledTheme = { id: `installed-${hash}`, text, hash, installedAt: now, source: 'file' }

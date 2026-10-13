@@ -198,7 +198,12 @@ export const parseThemeObject = (input: unknown): ParseResult => {
   const variants: Partial<Record<Polarity, Variant>> = {}
   for (const polarity of POLARITIES) {
     const source = file.variants[polarity]
-    if (source) variants[polarity] = parseVariant(source, `variants.${polarity}`, issues)
+    if (!source) continue
+    variants[polarity] = parseVariant(source, `variants.${polarity}`, issues)
+    if (hasProtoEventKey(raw, polarity)) {
+      const at = `variants.${polarity}.data.events.__proto__`
+      issues.push(warning('V12', at, '"__proto__" can’t name an event, so it was ignored'))
+    }
   }
   // Ahead of the gate, so a file whose variants and name are both broken hears about both at once.
   const name = cleanText(file.name, 'name', issues).trim()
@@ -213,6 +218,18 @@ export const parseThemeObject = (input: unknown): ParseResult => {
   if (file.author !== undefined) family.author = cleanText(file.author, 'author', issues)
   if (file.description !== undefined) family.description = cleanText(file.description, 'description', issues)
   return { ok: true, family, issues }
+}
+
+// zod rebuilds a record by assignment, and assigning "__proto__" sets a prototype instead of a key: that
+// key never reaches the parsed file, so it can't get the warning every other ignored key gets. JSON.parse
+// made it an ordinary own key, so look for it on the raw input.
+const hasProtoEventKey = (raw: Record<string, unknown>, polarity: Polarity) => {
+  let at: unknown = raw
+  for (const key of ['variants', polarity, 'data', 'events']) {
+    if (typeof at !== 'object' || at === null || !Object.hasOwn(at, key)) return false
+    at = (at as Record<string, unknown>)[key]
+  }
+  return typeof at === 'object' && at !== null && Object.hasOwn(at, '__proto__')
 }
 
 const parseVariant = (source: z.infer<typeof variantShape>, path: string, issues: Issue[]): Variant => {
@@ -243,10 +260,21 @@ const parseVariant = (source: z.infer<typeof variantShape>, path: string, issues
   if (eventKeys.length > MAX_EVENTS) {
     issues.push(error('V13', `${path}.data.events`, `At most ${MAX_EVENTS} event colours`))
   }
+  // The file key that claimed each event, so a second key for the same event can say which one won.
+  const claimedBy = new Map<string, string>()
   for (const key of eventKeys.slice(0, MAX_EVENTS)) {
+    const at = `${path}.data.events.${key}`
+    const parsed = dataColorAt(rawEvents[key], at, issues)
     const kind = resolveKind(key)
-    const parsed = dataColorAt(rawEvents[key], `${path}.data.events.${key}`, issues)
-    if (parsed && kind) data.events[kind] = parsed
+    const first = claimedBy.get(kind)
+    if (!kind) {
+      issues.push(warning('V12', at, `"${key}" names no event, so it was ignored`))
+    } else if (first !== undefined) {
+      issues.push(warning('V12', at, `"${key}" is the same event as "${first}", so it was ignored`))
+    } else {
+      claimedBy.set(kind, key)
+      if (parsed) data.events[kind] = parsed
+    }
   }
   return { colors, data }
 }

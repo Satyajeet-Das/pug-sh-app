@@ -149,6 +149,27 @@ describe('parseThemeObject', () => {
     if (!result.ok) return
     expect(Object.keys(result.family.variants.dark?.data.events ?? {})).toEqual(['page_view'])
   })
+
+  // Three ways an event key used to vanish without the warning every other ignored key gets. Text, not an
+  // object literal: only JSON.parse makes "__proto__" an ordinary key.
+  it('warns about event keys it ignores', () => {
+    const result = parseThemeText(
+      '{"version":1,"name":"Grape","variants":{"dark":{"data":{"events":' +
+        '{"__proto__":"#ff0000","---":"#00ff00","page_view":"#111111","pageView":"#222222","constructor":"#333333"}}}}}',
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    const messages = result.issues.map(i => `${i.rule} ${i.path}: ${i.message}`)
+    expect(messages).toContain(
+      'V12 variants.dark.data.events.__proto__: "__proto__" can’t name an event, so it was ignored',
+    )
+    expect(messages).toContain('V12 variants.dark.data.events.---: "---" names no event, so it was ignored')
+    expect(messages).toContain(
+      'V12 variants.dark.data.events.pageView: "pageView" is the same event as "page_view", so it was ignored',
+    )
+    const events = result.family.variants.dark?.data.events ?? {}
+    expect(Object.keys(events).sort()).toEqual(['constructor', 'page_view'])
+  })
 })
 
 describe('authoringSchema', () => {
