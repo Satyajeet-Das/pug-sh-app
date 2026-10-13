@@ -365,6 +365,7 @@ Colours are data. A theme is a file in format v1 (`src/theme/format.ts`; JSON Sc
 - **First paint is per project.**
   - `pug:theme-paint` v2 holds one paint per project (the 10 most recent, plus `last` for `/`) and the member's own.
   - `index.html` reads the project from the path.
+  - React leaves that paint alone until the workspace has picked its project: `ThemeApplier` waits on `workspaceSettledAtom`, or the member's own theme would flash in between. `theme-applier.test.tsx` runs the real script into App.
   - A v1 cache reads as the member's own.
 - **Anything that caches colours keys on `themeRevisionAtom`**, never `resolvedThemeAtom`: two dark themes share a polarity. `resolvedThemeAtom` is for code that genuinely branches on light vs dark (checkout, the share-card plate, the sign-in wall — which draws Pug's own palette for the mode, `pugDataPalette`, never the active theme's).
 - **Sign-in pages stay Pug**: the generated `.auth-surface` blocks reset every token.

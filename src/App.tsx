@@ -43,6 +43,7 @@ import {
   resetWorkspaceAtom,
   selectOrgAtom,
   workspaceErrorAtom,
+  workspaceSettledAtom,
 } from '@/data/workspace.atoms'
 import { setSeriesPalette } from '@/lib/event-colors'
 import { lazyWithRetry } from '@/lib/lazy'
@@ -63,14 +64,23 @@ const Demo = lazyWithRetry(() => import('@/pages/demo'), 'demo')
 // Puts the active theme on <html>. A layout effect, so the CSS variables land in the same frame as
 // the series palette App pushes during render. System-mode and contrast changes arrive through the
 // atoms' matchMedia subscriptions.
-const ThemeApplier = () => {
+//
+// Not while a workspace is still picking its project. index.html painted the URL's project from its
+// cache, and the member's own theme in between would flash on every load, then flash back when the
+// project lands. awaitWorkspace says whether a workspace is coming at all: the shared route mounts none.
+const ThemeApplier = ({ awaitWorkspace }: { awaitWorkspace: boolean }) => {
   const compiled = useAtomValue(compiledThemeAtom)
   const choice = useAtomValue(themeChoiceAtom)
   const selection = useAtomValue(themeSelectionAtom)
   const autoContrast = useAtomValue(autoContrastAtom)
   const library = useAtomValue(resolvableLibraryAtom)
   const projectId = useAtomValue(activeProjectAtom)?.id ?? null
-  useLayoutEffect(() => applyCompiledTheme(compiled), [compiled])
+  const authenticated = useAtomValue(isAuthenticatedAtom)
+  const settled = useAtomValue(workspaceSettledAtom)
+  const waiting = awaitWorkspace && authenticated && !settled
+  useLayoutEffect(() => {
+    if (!waiting) applyCompiledTheme(compiled)
+  }, [compiled, waiting])
   // What index.html paints on the next load, before React: this project's theme and the member's own,
   // both modes each, since the OS can flip.
   useEffect(
@@ -419,7 +429,7 @@ const App = () => {
 
   return (
     <>
-      <ThemeApplier />
+      <ThemeApplier awaitWorkspace={!isSharedRoute} />
       <FetchedThemeSync />
       <SessionUrlGuard />
       {/*

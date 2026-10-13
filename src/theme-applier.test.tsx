@@ -1,9 +1,13 @@
+import { create } from '@bufbuild/protobuf'
 import { act, render } from '@testing-library/react'
 import { createStore, Provider } from 'jotai'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Router } from 'wouter'
 import { memoryLocation } from 'wouter/memory-location'
+import { OrgSchema } from '@/api/genproto/dashboard/orgs/v1/orgs_pb'
+import { type Project, ProjectSchema } from '@/api/genproto/dashboard/projects/v1/projects_pb'
 import { jwtFor } from '@/test/jwt'
+import { runPaintScript } from '@/test/paint-script'
 
 vi.mock('@/api/rpc', async () => {
   const { atom } = await import('jotai')
@@ -24,6 +28,12 @@ vi.mock('@/analytics/pug', () => ({
   initAnalytics: vi.fn(),
   analyticsEnabled: false,
 }))
+
+// The screens are beside the point here, and each would call RPCs this file doesn't fake.
+vi.mock('@/pages/router', () => ({ default: () => null }))
+vi.mock('@/components/layout/sidebar', () => ({ default: () => null }))
+vi.mock('@/pages/shared-dashboard', () => ({ default: () => null }))
+vi.mock('@/pages/sign-in', () => ({ default: () => null }))
 
 // An OS the test can flip, installed before App loads: the theme atoms read the OS when their module
 // is first imported.
@@ -46,19 +56,36 @@ const { jwtAtom, refreshTokenAtom } = await import('@/auth/jwt.atoms')
 const { compiledThemeAtom, installThemeAtom, removeThemeAtom, selectThemeAtom, themeModeAtom } = await import(
   '@/data/theme.atoms'
 )
+const { activeOrgAtom, activeProjectAtom, bootstrapStatusAtom, commitProjectsAtom } = await import(
+  '@/data/workspace.atoms'
+)
+const { PAINT_CACHE_KEY } = await import('@/theme/paint-cache')
 const { TOKENS } = await import('@/theme/tokens')
 
 const root = document.documentElement
 const inline = () => TOKENS.filter(t => root.style.getPropertyValue(`--${t}`) !== '')
 const GRAPE = JSON.stringify({ version: 1, name: 'Grape', variants: { dark: { colors: { background: '#1e1b2e' } } } })
+const orgA = create(OrgSchema, { id: 'org-a', displayName: 'Org A' })
 
-const mount = () => {
+type Mount = { path?: string; signedIn?: boolean; settled?: boolean; project?: Project }
+
+// The real App. A settled workspace has its org picked and its project list landed, with `project`
+// active when one is given; an unsettled one is still loading, and stays so.
+const mount = ({ path = '/', signedIn = true, settled = true, project }: Mount = {}) => {
   const store = createStore()
-  store.set(refreshTokenAtom, 'refresh-token')
-  store.set(jwtAtom, jwtFor('cust-1'))
+  if (signedIn) {
+    store.set(refreshTokenAtom, 'refresh-token')
+    store.set(jwtAtom, jwtFor('cust-1'))
+  }
+  if (signedIn && settled) {
+    store.set(activeOrgAtom, orgA)
+    store.set(commitProjectsAtom, { orgId: orgA.id, projects: project ? [project] : [] })
+    if (project) store.set(activeProjectAtom, project)
+    store.set(bootstrapStatusAtom, 'ready')
+  }
   render(
     <Provider store={store}>
-      <Router hook={memoryLocation({ path: '/' }).hook}>
+      <Router hook={memoryLocation({ path }).hook}>
         <App />
       </Router>
     </Provider>,
@@ -71,6 +98,7 @@ afterEach(() => {
   root.className = ''
   root.removeAttribute('data-theme')
   root.removeAttribute('style')
+  window.history.replaceState(null, '', '/')
 })
 
 // The first-paint script sets <html> once, before React. Everything after that — every mode change,
@@ -108,5 +136,51 @@ describe('the theme on <html>', () => {
     })
     act(() => store.set(themeModeAtom, 'system'))
     expect(root.classList.contains('dark')).toBe(true)
+  })
+})
+
+// index.html paints the URL's project from its cache. Until the workspace has picked that project, React
+// knows less than the script did, so the paint has to survive it.
+describe('the first paint, handed to React', () => {
+  const pug = { builtin: 'pug', standard: true }
+  const colourblind = { builtin: 'pug-colourblind', standard: true }
+  // Pinned dark on Pug Colourblind, where the member's own is Pug following a light OS.
+  const pinned = create(ProjectSchema, { id: 'p1', displayName: 'First', defaultTheme: 'pug-colourblind#dark' })
+
+  it('keeps the project’s paint while the workspace loads', () => {
+    localStorage.setItem(
+      PAINT_CACHE_KEY,
+      JSON.stringify({
+        v: 2,
+        autoContrast: false,
+        personal: { light: pug, dark: pug },
+        projects: { p1: { pin: 'dark', light: colourblind, dark: colourblind } },
+      }),
+    )
+    window.history.replaceState(null, '', '/p/p1/overview')
+    runPaintScript()
+    expect(root.getAttribute('data-theme')).toBe('pug-colourblind')
+    mount({ path: '/p/p1/overview', settled: false })
+    expect(root.classList.contains('dark')).toBe(true)
+    expect(root.getAttribute('data-theme')).toBe('pug-colourblind')
+  })
+
+  it('paints the project’s theme once the workspace has picked it', () => {
+    mount({ path: '/p/p1/overview', project: pinned })
+    expect(root.classList.contains('dark')).toBe(true)
+    expect(root.getAttribute('data-theme')).toBe('pug-colourblind')
+  })
+
+  // Neither has a workspace coming: the shared route mounts no bootstrap, and signing out resets it.
+  it('paints the member’s own on a shared dashboard', () => {
+    root.classList.add('dark')
+    mount({ path: '/shared/s1', settled: false })
+    expect(root.classList.contains('dark')).toBe(false)
+  })
+
+  it('paints the member’s own while signed out', () => {
+    root.classList.add('dark')
+    mount({ signedIn: false })
+    expect(root.classList.contains('dark')).toBe(false)
   })
 })

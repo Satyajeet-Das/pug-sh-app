@@ -1,7 +1,6 @@
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CANONICAL_COLOR_RE } from '../lib/color/parse'
+import { runPaintScript as paint, PAINT_SCRIPT as script } from '../test/paint-script'
 import { compileVariant } from './compile'
 import { buildLibrary, checkInstall } from './library'
 import { buildPaintCache, PAINT_CACHE_KEY } from './paint-cache'
@@ -9,10 +8,7 @@ import { POLARITIES, TOKENS } from './tokens'
 
 // Runs the real inline script from index.html — the one piece of theming that executes before any
 // module loads, and the one that trusts localStorage.
-const html = readFileSync(join(process.cwd(), 'index.html'), 'utf8')
-const script = html.match(/<script>\s*(\/\/ Paint the stored theme[\s\S]*?)<\/script>/)?.[1] ?? ''
 const root = document.documentElement
-const paint = () => new Function(script)()
 const media = (matches: Record<string, boolean>) =>
   vi.stubGlobal('matchMedia', (query: string) => ({ matches: matches[query] ?? false, media: query }))
 const cache = (value: unknown) => localStorage.setItem(PAINT_CACHE_KEY, JSON.stringify(value))
