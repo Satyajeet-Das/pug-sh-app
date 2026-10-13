@@ -48,18 +48,6 @@ export const AuthSplit = ({ children }: { children: ReactNode }) => {
             <div className="min-h-88">{children}</div>
           </div>
         </div>
-
-        <p className="text-center text-xs text-faint">
-          by{' '}
-          <a
-            href="https://tshoka.com"
-            target="_blank"
-            rel="noopener noreferrer"
-            className="font-medium underline-offset-4 hover:underline"
-          >
-            tshoka
-          </a>
-        </p>
       </div>
 
       {/* Right — the product itself, drifting. Desktop only: it's decoration, and the rotated
