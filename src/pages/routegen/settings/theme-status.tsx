@@ -26,6 +26,7 @@ export const statusOf = (value: string, statuses: Record<string, FetchStatus>) =
 
 const FAILED: Record<Extract<FetchStatus, { state: 'failed' }>['reason'], string> = {
   network: 'the host may not let other sites read the file (CORS)',
+  timeout: 'the host took too long to answer',
   status: 'the host didn’t return the file',
   'too-large': 'the file is over 64 KB',
   insecure: 'only https URLs can be used',

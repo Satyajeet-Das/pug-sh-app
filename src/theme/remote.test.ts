@@ -1,7 +1,7 @@
-import { describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { fakeResponse } from '@/test/fake-response'
 import { MAX_THEME_BYTES } from './format'
-import { fetchThemeText, resolvePastedTheme } from './remote'
+import { FETCH_TIMEOUT_MS, fetchThemeText, resolvePastedTheme } from './remote'
 
 const URL1 = 'https://themes.pug.sh/linen/theme.json'
 const grape = JSON.stringify({ version: 1, name: 'Grape', variants: { dark: { colors: { background: '#1e1b2e' } } } })
@@ -14,6 +14,7 @@ describe('fetchThemeText', () => {
       credentials: 'omit',
       referrerPolicy: 'no-referrer',
       cache: 'no-cache',
+      signal: expect.any(AbortSignal),
     })
   })
 
@@ -74,6 +75,39 @@ describe('fetchThemeText', () => {
     const response = { ok: true, status: 200, url: URL1, headers: new Headers(), body: endless } as unknown as Response
     expect(await fetchThemeText(URL1, async () => response)).toEqual({ ok: false, reason: 'too-large' })
     expect(cancel).toHaveBeenCalled()
+  })
+
+  // A host can take the connection and then say nothing, or trickle. Either costs a member the deadline,
+  // once, and is reported as slow rather than as a CORS refusal.
+  describe('from a host that stalls', () => {
+    beforeEach(() => vi.useFakeTimers())
+    afterEach(() => vi.useRealTimers())
+
+    // What fetch does with an aborted signal: it rejects the request, or errors a body still arriving.
+    const aborted = () => new DOMException('The operation was aborted.', 'AbortError')
+
+    it('gives up waiting for an answer', async () => {
+      const fetcher = (_url: string, init: RequestInit) =>
+        new Promise<Response>((_resolve, reject) => init.signal?.addEventListener('abort', () => reject(aborted())))
+      const result = fetchThemeText(URL1, fetcher)
+      await vi.advanceTimersByTimeAsync(FETCH_TIMEOUT_MS)
+      await expect(result).resolves.toEqual({ ok: false, reason: 'timeout' })
+    })
+
+    it('gives up on a body that never ends', async () => {
+      const fetcher = async (_url: string, init: RequestInit) => {
+        const body = new ReadableStream<Uint8Array>({
+          start(controller) {
+            controller.enqueue(new TextEncoder().encode('{"version":1,'))
+            init.signal?.addEventListener('abort', () => controller.error(aborted()))
+          },
+        })
+        return { ok: true, status: 200, url: URL1, headers: new Headers(), body } as unknown as Response
+      }
+      const result = fetchThemeText(URL1, fetcher)
+      await vi.advanceTimersByTimeAsync(FETCH_TIMEOUT_MS)
+      await expect(result).resolves.toEqual({ ok: false, reason: 'timeout' })
+    })
   })
 })
 

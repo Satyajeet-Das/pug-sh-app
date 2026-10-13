@@ -6,6 +6,7 @@ import { ProjectSchema } from '@/api/genproto/dashboard/projects/v1/projects_pb'
 import { activeProjectAtom } from '@/data/workspace.atoms'
 import { fakeResponse } from '@/test/fake-response'
 import type { InstalledTheme } from '@/theme/library'
+import { FETCH_TIMEOUT_MS } from '@/theme/remote'
 import {
   autoContrastAtom,
   compiledThemeAtom,
@@ -351,7 +352,10 @@ describe('project themes', () => {
   }
 
   beforeEach(() => vi.mocked(trackEvent).mockClear())
-  afterEach(() => vi.unstubAllGlobals())
+  afterEach(() => {
+    vi.unstubAllGlobals()
+    vi.useRealTimers()
+  })
 
   it('shows the project’s default over the member’s own choice', () => {
     expect(inProject('pug-colourblind').get(compiledThemeAtom)).toMatchObject({ id: 'pug-colourblind' })
@@ -400,6 +404,28 @@ describe('project themes', () => {
     await store.set(refreshFetchedThemeAtom, LINEN)
     expect(store.get(fetchStatusAtom)[LINEN]).toEqual({ state: 'failed', reason: 'status', status: 404 })
     expect(store.get(compiledThemeAtom)).toMatchObject({ id: LINEN })
+  })
+
+  // A fetch that never ends would hold "Checking the file…" for the session, and every later refresh
+  // would join it, so a host that recovers would never be asked again. Its own URL: a fetch that hangs
+  // stays shared for the whole file.
+  it('gives up on a host that stalls, and asks again next time', async () => {
+    const SLOW = 'https://slow.example/theme.json'
+    vi.useFakeTimers()
+    const fetcher = vi.fn(
+      (_url: string, init: RequestInit) =>
+        new Promise<Response>((_resolve, reject) =>
+          init.signal?.addEventListener('abort', () => reject(new DOMException('aborted', 'AbortError'))),
+        ),
+    )
+    vi.stubGlobal('fetch', fetcher)
+    const store = inProject(SLOW)
+    const first = store.set(refreshFetchedThemeAtom, SLOW)
+    await vi.advanceTimersByTimeAsync(FETCH_TIMEOUT_MS)
+    await first
+    expect(store.get(fetchStatusAtom)[SLOW]).toEqual({ state: 'failed', reason: 'timeout' })
+    void store.set(refreshFetchedThemeAtom, SLOW)
+    expect(fetcher).toHaveBeenCalledTimes(2)
   })
 
   it('shares one fetch between concurrent refreshes', async () => {

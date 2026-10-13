@@ -360,6 +360,7 @@ Colours are data. A theme is a file in format v1 (`src/theme/format.ts`; JSON Sc
 - **Members' browsers fetch theme files by URL. The backend never does** (`theme/remote.ts`).
   - The request has no cookies and no referrer, and uses `cache: 'no-cache'` (a 304 when the file is unchanged).
   - The body is abandoned past 64 KB, and the content type is ignored (raw GitHub sends `text/plain`).
+  - A host that stalls, before answering or partway through the body, is given up on after 10 s (`FETCH_TIMEOUT_MS`) and reported as slow, not as CORS. Refreshes of one URL share a fetch, so without the deadline a hung one held "Checking the file…" for the whole session.
   - Only versions that validate are kept, in `pug:theme-remote`: 10 files, the least recently fetched dropped first. A broken push or a dead host keeps the last good copy.
   - That cache keeps its copy in memory even when storage refuses the write.
 - **First paint is per project.**

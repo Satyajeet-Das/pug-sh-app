@@ -18,6 +18,7 @@ const FAILURE: Record<Failure['reason'], string> = {
   'not-a-url': 'Enter an https URL.',
   insecure: 'Only https URLs can be used.',
   network: 'Couldn’t load it. The host may not let other sites read the file (CORS).',
+  timeout: 'Couldn’t load it. The host took too long to answer.',
   status: 'The host didn’t return the file.',
   'too-large': 'Theme files are limited to 64 KB.',
   'not-json': 'That URL doesn’t return a theme file.',

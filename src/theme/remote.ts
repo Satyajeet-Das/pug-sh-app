@@ -7,8 +7,11 @@ import type { Polarity } from './tokens'
 // the admin chose — GitHub, a CDN, themes.pug.sh — so the request says nothing about the member, and the
 // answer is untrusted: capped at the size an install allows and validated like one.
 
-export type FetchFailure = 'network' | 'status' | 'too-large' | 'insecure'
+export type FetchFailure = 'network' | 'status' | 'too-large' | 'insecure' | 'timeout'
 export type FetchResult = { ok: true; text: string } | { ok: false; reason: FetchFailure; status?: number }
+
+/** How long a theme file may take, its answer and its body together. A host that stalls costs a member this, once. */
+export const FETCH_TIMEOUT_MS = 10_000
 
 type Fetcher = (url: string, init: RequestInit) => Promise<Response>
 
@@ -41,26 +44,36 @@ const readCapped = async (response: Response) => {
   return new TextDecoder().decode(bytes)
 }
 
-/**
- * GETs a theme file: no cookies, and no Referer, since dashboard URLs carry project and dashboard ids.
- * 'no-cache' revalidates through the HTTP cache, so an unchanged file costs a 304 and no body. The
- * content type is ignored: raw GitHub serves text/plain and jsDelivr application/octet-stream.
- */
-export const fetchThemeText = async (url: string, fetcher = browserFetch): Promise<FetchResult> => {
-  if (!url.startsWith('https://')) return { ok: false, reason: 'insecure' }
-  let response: Response
-  try {
-    response = await fetcher(url, { credentials: 'omit', referrerPolicy: 'no-referrer', cache: 'no-cache' })
-  } catch {
-    // A CORS refusal looks exactly like this from inside the page: the browser hides the response.
-    return { ok: false, reason: 'network' }
-  }
+// The request and its body. What the network does wrong is thrown; what the host answers is returned.
+const fetchWithin = async (url: string, fetcher: Fetcher, signal: AbortSignal): Promise<FetchResult> => {
+  const response = await fetcher(url, { credentials: 'omit', referrerPolicy: 'no-referrer', cache: 'no-cache', signal })
   if (response.url !== '' && !response.url.startsWith('https://')) return { ok: false, reason: 'insecure' }
   if (!response.ok) return { ok: false, reason: 'status', status: response.status }
   if (Number(response.headers.get('content-length')) > MAX_THEME_BYTES) return { ok: false, reason: 'too-large' }
   const text = await readCapped(response)
   if (text === null) return { ok: false, reason: 'too-large' }
   return { ok: true, text }
+}
+
+/**
+ * GETs a theme file: no cookies, and no Referer, since dashboard URLs carry project and dashboard ids.
+ * 'no-cache' revalidates through the HTTP cache, so an unchanged file costs a 304 and no body. The
+ * content type is ignored: raw GitHub serves text/plain and jsDelivr application/octet-stream. A host that
+ * stalls, before answering or partway through the body, is given up on after FETCH_TIMEOUT_MS.
+ */
+export const fetchThemeText = async (url: string, fetcher = browserFetch): Promise<FetchResult> => {
+  if (!url.startsWith('https://')) return { ok: false, reason: 'insecure' }
+  // An abort fails the request, or the body mid-read, the way a dropped connection would.
+  const deadline = new AbortController()
+  const timer = setTimeout(() => deadline.abort(), FETCH_TIMEOUT_MS)
+  try {
+    return await fetchWithin(url, fetcher, deadline.signal)
+  } catch {
+    // A CORS refusal looks exactly like a network failure from inside the page: the browser hides the response.
+    return { ok: false, reason: deadline.signal.aborted ? 'timeout' : 'network' }
+  } finally {
+    clearTimeout(timer)
+  }
 }
 
 export type PastedTheme =
@@ -75,9 +88,10 @@ const TELLING: Record<PastedFailure['reason'], number> = {
   'not-a-url': 0,
   'not-json': 1,
   status: 2,
-  network: 3,
-  'too-large': 4,
-  insecure: 5,
+  timeout: 3,
+  network: 4,
+  'too-large': 5,
+  insecure: 6,
 }
 
 const isJson = (text: string) => {
