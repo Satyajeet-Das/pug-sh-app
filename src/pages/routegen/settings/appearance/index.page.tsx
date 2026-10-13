@@ -8,6 +8,7 @@ import {
   STORAGE_REFUSED,
   selectThemeAtom,
   type ThemeMode,
+  themeChoiceAtom,
   themeLibraryAtom,
   themeModeAtom,
   themeSelectionAtom,
@@ -17,6 +18,7 @@ import type { UsableEntry } from '@/theme/library'
 import { POLARITIES } from '@/theme/tokens'
 import InstalledThemes from './installed-themes'
 import ThemeSwatch from './theme-swatch'
+import ThisProject from './this-project'
 
 const MODES: { value: ThemeMode; label: string; icon: typeof Sun }[] = [
   { value: 'light', label: 'Light', icon: Sun },
@@ -31,6 +33,7 @@ const Appearance = () => {
   const [autoContrast, setAutoContrast] = useAtom(autoContrastAtom)
   const selection = useAtomValue(themeSelectionAtom)
   const library = useAtomValue(themeLibraryAtom)
+  const pin = useAtomValue(themeChoiceAtom).pin
   const selectTheme = useSetAtom(selectThemeAtom)
   // A write the browser refused changed nothing — say so, or the click looks like it did nothing.
   const saved = (ok: boolean) => {
@@ -39,6 +42,8 @@ const Appearance = () => {
 
   return (
     <div className="max-w-3xl space-y-8">
+      <ThisProject />
+
       <section>
         <SectionHeader title="Mode" />
         <div className="inline-flex rounded-lg border border-border p-0.5">
@@ -58,37 +63,43 @@ const Appearance = () => {
             </button>
           ))}
         </div>
+        {pin && <p className="mt-2 text-xs text-muted-foreground">This project is always {pin}.</p>}
       </section>
 
-      {POLARITIES.map(polarity => {
-        // The theme selected for this mode, when it can't be used — Pug is showing in its place.
-        const unusable = library.find(entry => entry.id === selection[polarity] && !entry.family)
-        const reason = unusable?.issues.find(issue => issue.severity === 'error')?.message
-        return (
-          <section key={polarity}>
-            <SectionHeader title={ROW_TITLE[polarity]} />
-            {/* A labelled group, so a screen reader says which mode a swatch sets — both rows hold a "Pug". */}
-            <div role="group" aria-label={ROW_TITLE[polarity]} className="flex flex-wrap gap-3">
-              {library
-                .filter((entry): entry is UsableEntry => Boolean(entry.family?.variants[polarity]))
-                .map(entry => (
-                  <ThemeSwatch
-                    key={entry.id}
-                    entry={entry}
-                    polarity={polarity}
-                    selected={selection[polarity] === entry.id}
-                    onSelect={() => saved(selectTheme({ polarity, id: entry.id }))}
-                  />
-                ))}
-            </div>
-            {unusable && (
-              <p className="mt-2 text-xs text-negative">
-                {unusable.name} can’t be used, so Pug is showing instead{reason ? ` — ${reason}` : '.'}
-              </p>
-            )}
-          </section>
-        )
-      })}
+      <section>
+        <SectionHeader title="Your theme" description="Used in projects without a default" />
+        <div className="space-y-5">
+          {POLARITIES.map(polarity => {
+            // The theme selected for this mode, when it can't be used — Pug is showing in its place.
+            const unusable = library.find(entry => entry.id === selection[polarity] && !entry.family)
+            const reason = unusable?.issues.find(issue => issue.severity === 'error')?.message
+            return (
+              <div key={polarity}>
+                <p className="mb-2 text-xs font-medium text-muted-foreground">{ROW_TITLE[polarity]}</p>
+                {/* A labelled group, so a screen reader says which mode a swatch sets — both rows hold a "Pug". */}
+                <div role="group" aria-label={ROW_TITLE[polarity]} className="flex flex-wrap gap-3">
+                  {library
+                    .filter((entry): entry is UsableEntry => Boolean(entry.family?.variants[polarity]))
+                    .map(entry => (
+                      <ThemeSwatch
+                        key={entry.id}
+                        entry={entry}
+                        polarity={polarity}
+                        selected={selection[polarity] === entry.id}
+                        onSelect={() => saved(selectTheme({ polarity, id: entry.id }))}
+                      />
+                    ))}
+                </div>
+                {unusable && (
+                  <p className="mt-2 text-xs text-negative">
+                    {unusable.name} can’t be used, so Pug is showing instead{reason ? ` — ${reason}` : '.'}
+                  </p>
+                )}
+              </div>
+            )
+          })}
+        </div>
+      </section>
 
       <section>
         <SectionHeader title="High contrast" />

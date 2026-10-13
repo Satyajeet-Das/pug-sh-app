@@ -1,6 +1,9 @@
+import { create } from '@bufbuild/protobuf'
 import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { createStore, Provider } from 'jotai'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { ProjectSchema } from '@/api/genproto/dashboard/projects/v1/projects_pb'
+import { fakeResponse } from '@/test/fake-response'
 
 vi.mock('@/analytics/pug', () => ({
   trackEvent: vi.fn(),
@@ -14,7 +17,15 @@ vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
 const { trackEvent } = await import('@/analytics/pug')
 const { toast } = await import('sonner')
-const { installedThemesAtom, STORAGE_REFUSED, themeModeAtom, themeSelectionAtom } = await import('@/data/theme.atoms')
+const {
+  installedThemesAtom,
+  projectOverridesAtom,
+  refreshFetchedThemeAtom,
+  STORAGE_REFUSED,
+  themeModeAtom,
+  themeSelectionAtom,
+} = await import('@/data/theme.atoms')
+const { activeProjectAtom } = await import('@/data/workspace.atoms')
 const Appearance = (await import('./index.page')).default
 
 const grape = JSON.stringify({ version: 1, name: 'Grape', variants: { dark: { colors: { background: '#1e1b2e' } } } })
@@ -204,5 +215,81 @@ describe('Settings → Appearance', () => {
     fireEvent.click(toggle)
     expect(toggle.getAttribute('aria-expanded')).toBe('true')
     expect(within(screen.getByRole('table')).getByText(/foreground on background is/)).toBeTruthy()
+  })
+})
+
+describe('This project', () => {
+  const inProject = (defaultTheme: string) => {
+    const store = createStore()
+    store.set(activeProjectAtom, create(ProjectSchema, { id: 'p1', displayName: 'Acme', defaultTheme }))
+    render(
+      <Provider store={store}>
+        <Appearance />
+      </Provider>,
+    )
+    return store
+  }
+  const pickSwatch = (name: string) =>
+    fireEvent.click(within(screen.getByRole('group', { name: 'Themes' })).getByRole('button', { name }))
+
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('shows the project’s default, and overrides it in this browser', () => {
+    const store = inProject('pug-colourblind#dark')
+    expect(screen.getByText('Project default: Pug Colourblind-safe, always dark')).toBeTruthy()
+    pickSwatch('Pug High Contrast')
+    fireEvent.click(screen.getByRole('button', { name: 'Use in this project' }))
+    expect(store.get(projectOverridesAtom)).toEqual({ p1: 'pug-high-contrast' })
+    expect(screen.getByText('Using Pug High Contrast in this project.')).toBeTruthy()
+    expect(trackEvent).toHaveBeenCalledWith('theme_selected', {
+      theme: 'pug-high-contrast',
+      mode: 'both',
+      scope: 'project',
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Back to project default' }))
+    expect(store.get(projectOverridesAtom)).toEqual({})
+  })
+
+  it('says when the project’s theme couldn’t load', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => fakeResponse('', { status: 404 })),
+    )
+    const url = 'https://themes.pug.sh/gone/theme.json'
+    const store = inProject(url)
+    await act(() => store.set(refreshFetchedThemeAtom, url))
+    expect(screen.getByText('Couldn’t load this project’s theme. Showing your theme instead.')).toBeTruthy()
+  })
+
+  it('notes a pinned mode under Mode', () => {
+    inProject('pug#dark')
+    expect(screen.getByText('This project is always dark.')).toBeTruthy()
+  })
+
+  it('says so when storage refuses the override', () => {
+    const store = inProject('')
+    pickSwatch('Pug High Contrast')
+    const refusal = vi.spyOn(localStorage, 'setItem').mockImplementation(() => {
+      throw new DOMException('full', 'QuotaExceededError')
+    })
+    try {
+      fireEvent.click(screen.getByRole('button', { name: 'Use in this project' }))
+    } finally {
+      refusal.mockRestore()
+    }
+    expect(toast.error).toHaveBeenCalledWith(STORAGE_REFUSED)
+    expect(store.get(projectOverridesAtom)).toEqual({})
+  })
+
+  // Review Focus 5: a reference from a newer build renders as none, not as a crash.
+  it('renders a stored reference it can’t read as no default', () => {
+    inProject('pug#dim')
+    expect(screen.getByText('No project default, using your theme')).toBeTruthy()
+  })
+
+  it('keeps the member’s own rows under Your theme', () => {
+    inProject('')
+    expect(screen.getByText('Used in projects without a default')).toBeTruthy()
+    expect(screen.getByRole('group', { name: 'Light theme' })).toBeTruthy()
   })
 })
