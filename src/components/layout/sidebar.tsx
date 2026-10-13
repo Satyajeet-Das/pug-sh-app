@@ -40,7 +40,7 @@ import {
   SidebarRail,
   useSidebar,
 } from '@/components/ui/sidebar'
-import { STORAGE_REFUSED, type ThemeMode, themeModeAtom } from '@/data/theme.atoms'
+import { STORAGE_REFUSED, type ThemeMode, themeChoiceAtom, themeModeAtom } from '@/data/theme.atoms'
 import {
   activeOrgAtom,
   activeProjectAtom,
@@ -94,6 +94,10 @@ const AppSidebar = () => {
   const signOut = useSetAtom(signOutAtom)
   const isDemo = useAtomValue(isDemoSessionAtom)
   const [theme, setTheme] = useAtom(themeModeAtom)
+  // A project that pins a mode wins over the member's setting, so the button says which and stays put —
+  // flipping a setting that changes nothing on screen would read as a bug.
+  const pin = useAtomValue(themeChoiceAtom).pin
+  const shown = pin ?? theme
   const { setOpenMobile } = useSidebar()
 
   const routeProjectId = useRouteProjectId()
@@ -335,11 +339,15 @@ const AppSidebar = () => {
         <UsageMeter href={`${prefix}/settings/billing`} />
         <SidebarMenu>
           <SidebarMenuItem>
-            <SidebarMenuButton onClick={cycleTheme} tooltip={`Mode: ${theme}`}>
-              {theme === 'light' && <Sun />}
-              {theme === 'dark' && <Moon />}
-              {theme === 'system' && <Monitor />}
-              <span className="capitalize">{theme}</span>
+            <SidebarMenuButton
+              onClick={pin ? undefined : cycleTheme}
+              aria-disabled={pin ? true : undefined}
+              tooltip={pin ? `Mode: ${pin}, set by this project` : `Mode: ${theme}`}
+            >
+              {shown === 'light' && <Sun />}
+              {shown === 'dark' && <Moon />}
+              {shown === 'system' && <Monitor />}
+              <span className="capitalize">{shown}</span>
             </SidebarMenuButton>
           </SidebarMenuItem>
           <SidebarMenuItem>
