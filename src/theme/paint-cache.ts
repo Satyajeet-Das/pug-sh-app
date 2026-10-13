@@ -1,31 +1,93 @@
+import type { ThemeChoice } from './choice'
 import { compileOnce } from './compile'
 import { chooseActive, type LibraryEntry } from './library'
 import { POLARITIES, type Polarity } from './tokens'
 
-// What the index.html script paints before React loads. Both modes are cached because the OS can
-// flip between visits. Keep the key, the shape and the auto-contrast rule in sync with that script —
+// What the index.html script paints before React loads: per project, since projects can look different,
+// plus the member's own for everything else. Both modes are cached because the OS can flip between
+// visits. Keep the key, the shape and the auto-contrast rule in sync with that script —
 // paint-script.test.ts runs the real one against this output.
 
 export const PAINT_CACHE_KEY = 'pug:theme-paint'
 
+/** How many projects the cache remembers. The least recently painted go first. */
+export const MAX_PAINTED_PROJECTS = 10
+
 export type Paint = { builtin: string; standard: boolean } | { vars: Record<string, string>; standard: boolean }
+export type ModePaints = Record<Polarity, Paint>
+export type ProjectPaint = ModePaints & { pin?: Polarity }
 
-export type PaintCache = { v: 1; autoContrast: boolean } & Record<Polarity, Paint>
-
-export const buildPaintCache = (input: {
-  selection: Record<Polarity, string>
+export type PaintCache = {
+  v: 2
   autoContrast: boolean
-  library: LibraryEntry[]
-}): PaintCache => {
+  /** The project painted most recently: what `/` paints, since it redirects there. */
+  last?: string
+  /** The member's own choice: pages outside a project, and projects not cached yet. */
+  personal: ModePaints
+  projects: Record<string, ProjectPaint>
+}
+
+const FALLBACK: Paint = { builtin: 'pug', standard: true }
+
+const paintsFor = (selection: Record<Polarity, string>, library: LibraryEntry[]): ModePaints => {
   const paintFor = (polarity: Polarity): Paint => {
     // The script applies auto-contrast itself, against the live media query.
-    const active = chooseActive({ ...input, polarity, autoContrast: false, moreContrast: false })
+    const active = chooseActive({ selection, library, polarity, autoContrast: false, moreContrast: false })
     const standard = active.family.contrast === 'standard'
     if (active.builtin) return { builtin: active.id, standard }
     return { vars: compileOnce(active).vars, standard }
   }
   const [light, dark] = POLARITIES.map(paintFor)
-  return { v: 1, autoContrast: input.autoContrast, light, dark }
+  return { light, dark }
+}
+
+/** The stored cache, or null. A version 1 cache, one paint per mode, reads as the member's own. */
+export const readPaintCache = (): PaintCache | null => {
+  try {
+    const raw = JSON.parse(localStorage.getItem(PAINT_CACHE_KEY) ?? 'null')
+    if (raw?.v === 2 && typeof raw.projects === 'object' && raw.projects !== null) return raw as PaintCache
+    if (raw?.v === 1) {
+      return {
+        v: 2,
+        autoContrast: raw.autoContrast !== false,
+        personal: { light: raw.light ?? FALLBACK, dark: raw.dark ?? FALLBACK },
+        projects: {},
+      }
+    }
+  } catch {
+    // Unreadable is the same as absent.
+  }
+  return null
+}
+
+export const buildPaintCache = (input: {
+  previous: PaintCache | null
+  projectId: string | null
+  choice: ThemeChoice
+  personal: Record<Polarity, string>
+  autoContrast: boolean
+  library: LibraryEntry[]
+}): PaintCache => {
+  const projects = { ...input.previous?.projects }
+  let last = input.previous?.last
+  if (input.projectId) {
+    const paint: ProjectPaint = paintsFor(input.choice.selection, input.library)
+    if (input.choice.pin) paint.pin = input.choice.pin
+    // Re-inserted so it moves to the end: key order is the recency the trim below reads. Project ids
+    // are 20-character xids, never integer-like keys that objects would sort first.
+    delete projects[input.projectId]
+    projects[input.projectId] = paint
+    last = input.projectId
+  }
+  const kept = Object.fromEntries(Object.entries(projects).slice(-MAX_PAINTED_PROJECTS))
+  const cache: PaintCache = {
+    v: 2,
+    autoContrast: input.autoContrast,
+    personal: paintsFor(input.personal, input.library),
+    projects: kept,
+  }
+  if (last && Object.hasOwn(kept, last)) cache.last = last
+  return cache
 }
 
 export const writePaintCache = (cache: PaintCache) => {

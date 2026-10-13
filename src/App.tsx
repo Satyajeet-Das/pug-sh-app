@@ -15,7 +15,15 @@ import { SocialNav } from '@/components/social-nav'
 import { Button } from '@/components/ui/button'
 import { SidebarInset, SidebarProvider, SidebarTrigger } from '@/components/ui/sidebar'
 import { Toaster } from '@/components/ui/sonner'
-import { autoContrastAtom, compiledThemeAtom, themeLibraryAtom, themeSelectionAtom } from '@/data/theme.atoms'
+import {
+  activeThemeUrlsAtom,
+  autoContrastAtom,
+  compiledThemeAtom,
+  refreshFetchedThemeAtom,
+  resolvableLibraryAtom,
+  themeChoiceAtom,
+  themeSelectionAtom,
+} from '@/data/theme.atoms'
 import {
   activeOrgAtom,
   activeProjectAtom,
@@ -40,7 +48,8 @@ import { setSeriesPalette } from '@/lib/event-colors'
 import { lazyWithRetry } from '@/lib/lazy'
 import { useRouteProjectId } from '@/lib/project-path'
 import { applyCompiledTheme } from '@/theme/apply'
-import { buildPaintCache, writePaintCache } from '@/theme/paint-cache'
+import type { RemoteId } from '@/theme/library'
+import { buildPaintCache, readPaintCache, writePaintCache } from '@/theme/paint-cache'
 
 const AppSidebar = lazyWithRetry(() => import('@/components/layout/sidebar'), 'sidebar')
 const Router = lazyWithRetry(() => import('@/pages/router'), 'router')
@@ -56,15 +65,34 @@ const Demo = lazyWithRetry(() => import('@/pages/demo'), 'demo')
 // atoms' matchMedia subscriptions.
 const ThemeApplier = () => {
   const compiled = useAtomValue(compiledThemeAtom)
+  const choice = useAtomValue(themeChoiceAtom)
   const selection = useAtomValue(themeSelectionAtom)
   const autoContrast = useAtomValue(autoContrastAtom)
-  const library = useAtomValue(themeLibraryAtom)
+  const library = useAtomValue(resolvableLibraryAtom)
+  const projectId = useAtomValue(activeProjectAtom)?.id ?? null
   useLayoutEffect(() => applyCompiledTheme(compiled), [compiled])
-  // What index.html paints on the next load, before React: both modes, since the OS can flip.
+  // What index.html paints on the next load, before React: this project's theme and the member's own,
+  // both modes each, since the OS can flip.
   useEffect(
-    () => writePaintCache(buildPaintCache({ selection, autoContrast, library })),
-    [selection, autoContrast, library],
+    () =>
+      writePaintCache(
+        buildPaintCache({ previous: readPaintCache(), projectId, choice, personal: selection, autoContrast, library }),
+      ),
+    [projectId, choice, selection, autoContrast, library],
   )
+  return null
+}
+
+// Keeps the theme files the active project names fresh, its default and this browser's override for it:
+// fetched each time the project becomes active, while a cached copy paints. ThemeApplier repaints when
+// a newer valid copy lands.
+const FetchedThemeSync = () => {
+  const key = useAtomValue(activeThemeUrlsAtom).join('\n')
+  const refresh = useSetAtom(refreshFetchedThemeAtom)
+  useEffect(() => {
+    if (!key) return
+    for (const url of key.split('\n')) void refresh(url as RemoteId)
+  }, [key, refresh])
   return null
 }
 
@@ -392,6 +420,7 @@ const App = () => {
   return (
     <>
       <ThemeApplier />
+      <FetchedThemeSync />
       <SessionUrlGuard />
       {/*
         Unconditional, including on the shared route: it issues no workspace RPCs, so it doesn't
