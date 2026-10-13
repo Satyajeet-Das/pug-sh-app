@@ -1,11 +1,11 @@
 import { Check } from 'lucide-react'
 import { cn } from '@/lib/utils'
+import ThemePreview from '@/pages/routegen/settings/theme-preview'
 import { compileOnce } from '@/theme/compile'
 import type { UsableEntry } from '@/theme/library'
 import type { Polarity } from '@/theme/tokens'
 
-// A theme drawn from its own compiled variant — canvas, a card, the three ink tiers and five data
-// dots — so it previews themes that aren't active, which a screenshot of the live page couldn't.
+// A theme as a pressable swatch, drawn by ThemePreview from the theme's own compiled variant.
 const ThemeSwatch = ({
   entry,
   polarity,
@@ -17,7 +17,7 @@ const ThemeSwatch = ({
   selected: boolean
   onSelect: () => void
 }) => {
-  const { vars, data } = compileOnce({ id: entry.id, builtin: entry.builtin, family: entry.family, polarity })
+  const compiled = compileOnce({ id: entry.id, builtin: entry.builtin, family: entry.family, polarity })
 
   return (
     <button
@@ -31,18 +31,7 @@ const ThemeSwatch = ({
         selected ? 'border-ring ring-1 ring-ring' : 'border-border hover:border-muted-foreground/50',
       )}
     >
-      <span aria-hidden className="flex h-20 rounded-md p-2" style={{ background: vars['--background'] }}>
-        <span className="flex flex-1 flex-col gap-1.5 rounded-sm p-2" style={{ background: vars['--card'] }}>
-          <span className="h-1.5 w-3/4 rounded-full" style={{ background: vars['--foreground'] }} />
-          <span className="h-1.5 w-1/2 rounded-full" style={{ background: vars['--muted-foreground'] }} />
-          <span className="h-1.5 w-1/3 rounded-full" style={{ background: vars['--faint'] }} />
-          <span className="mt-auto flex gap-1">
-            {data.categorical.slice(0, 5).map((color, i) => (
-              <span key={i} className="size-2 rounded-full" style={{ background: color.dot }} />
-            ))}
-          </span>
-        </span>
-      </span>
+      <ThemePreview compiled={compiled} />
       <span className="flex items-center gap-1 px-0.5 text-xs font-medium">
         {selected && <Check className="size-3 shrink-0" />}
         <span className="truncate">{entry.name}</span>
