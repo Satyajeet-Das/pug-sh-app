@@ -1,5 +1,5 @@
 import { Loader2 } from 'lucide-react'
-import { useRef, useState } from 'react'
+import { useState } from 'react'
 import { Button } from '@/components/ui/button'
 import { Input } from '@/components/ui/input'
 import { IssueList, warningSummary } from '@/pages/routegen/settings/theme-issues'
@@ -17,7 +17,7 @@ type Failure = Extract<PastedTheme, { ok: false }>
 const FAILURE: Record<Failure['reason'], string> = {
   'not-a-url': 'Enter an https URL.',
   insecure: 'Only https URLs can be used.',
-  network: 'Couldn’t load it. The host may not let other sites read the file (CORS).',
+  network: 'Couldn’t reach the host, or it doesn’t let other sites read the file (CORS).',
   timeout: 'Couldn’t load it. The host took too long to answer.',
   status: 'The host didn’t return the file.',
   'too-large': 'Theme files are limited to 64 KB.',
@@ -77,32 +77,17 @@ const Report = ({
   )
 }
 
-/**
- * "Use a URL": fetches what was pasted, in this browser — the same origin members' browsers fetch from,
- * so a file that loads here loads for them — and reports it: previews, issues, or why it can't be used.
- */
-const ThemeUrlField = ({
-  id,
-  disclosure,
-  onUse,
-}: {
-  id: string
-  disclosure: boolean
-  onUse: (file: CheckedFile) => void
-}) => {
+// Checks a pasted URL from this browser, the origin members' browsers fetch from too, and reports it.
+const ThemeUrlField = ({ disclosure, onUse }: { disclosure: boolean; onUse: (file: CheckedFile) => void }) => {
   const [input, setInput] = useState('')
   const [checking, setChecking] = useState(false)
   const [result, setResult] = useState<PastedTheme | null>(null)
-  const latest = useRef(0)
 
+  // Check is disabled while one runs, which blocks Enter too, so checks never overlap.
   const check = async () => {
-    const seq = ++latest.current
     setChecking(true)
-    const next = await resolvePastedTheme(input)
-    // Checks finish in any order: only the latest one's answer is shown.
-    if (seq !== latest.current) return
+    setResult(await resolvePastedTheme(input))
     setChecking(false)
-    setResult(next)
   }
 
   return (
@@ -115,7 +100,6 @@ const ThemeUrlField = ({
         }}
       >
         <Input
-          id={id}
           aria-label="Theme URL"
           placeholder="themes.pug.sh/linen, or a link to a theme file"
           value={input}

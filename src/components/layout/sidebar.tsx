@@ -94,8 +94,8 @@ const AppSidebar = () => {
   const signOut = useSetAtom(signOutAtom)
   const isDemo = useAtomValue(isDemoSessionAtom)
   const [theme, setTheme] = useAtom(themeModeAtom)
-  // A project that pins a mode wins over the member's setting, so the button says which and stays put —
-  // flipping a setting that changes nothing on screen would read as a bug.
+  // A pinned mode wins over the member's setting, so the button says so and stays put: flipping a setting
+  // that changes nothing on screen would read as a bug.
   const pin = useAtomValue(themeChoiceAtom).pin
   const shown = pin ?? theme
   const { setOpenMobile } = useSidebar()
@@ -110,7 +110,7 @@ const AppSidebar = () => {
   const [newProjectName, setNewProjectName] = useState('')
   const [saving, setSaving] = useState(false)
 
-  // No default project pick here — WorkspaceBootstrap owns the only one. A copy flushes after it in
+  // No default project pick here: WorkspaceBootstrap owns the only one. A copy flushes after it in
   // the same pass, still seeing activeProject null, and overwrites the restored pick with projects[0].
 
   // On mount, not on open: the count decides whether the Organizations section renders, and
@@ -143,11 +143,11 @@ const AppSidebar = () => {
   // Hands the switch to the bootstrap rather than fetching projects and picking one here: '/' is the
   // route that names no project, so WorkspaceBootstrap runs its own restore-last-visit-then-first
   // rule and ProjectRedirect navigates once the pick lands. Picking here as well would be a second
-  // copy of that rule — the one the settings page used to hold — racing the first.
+  // copy of that rule (the one the settings page used to hold) racing the first.
   //
   // Unconditionally '/', unlike a project switch, which keeps you on the current page: deep routes
   // here are keyed by a dashboard or profile belonging to the org being left. Replace rather than
-  // push for the same reason — that URL names a project of the org just left, so Back lands on
+  // push for the same reason: that URL names a project of the org just left, so Back lands on
   // "Project not found", and nothing corrects it: the pick has already happened, so the bootstrap's
   // default-pick effect sees a valid active project and declines to act.
   const handleSelectOrg = (orgId: string) => {
@@ -342,17 +342,19 @@ const AppSidebar = () => {
             <SidebarMenuButton
               onClick={pin ? undefined : cycleTheme}
               aria-disabled={pin ? true : undefined}
-              tooltip={pin ? `Mode: ${pin}, set by this project` : `Mode: ${theme}`}
+              // Hoverable while disabled, so the collapsed sidebar's tooltip can still say why.
+              className="aria-disabled:pointer-events-auto"
+              tooltip={pin ? `This project is always ${pin}` : `Mode: ${theme}`}
             >
               {shown === 'light' && <Sun />}
               {shown === 'dark' && <Moon />}
               {shown === 'system' && <Monitor />}
-              <span className="capitalize">{shown}</span>
+              {pin ? <span>Always {pin}</span> : <span className="capitalize">{theme}</span>}
             </SidebarMenuButton>
           </SidebarMenuItem>
           <SidebarMenuItem>
             <SidebarMenuButton
-              // Dropping the /p/:projectId URL is App's job, not this button's — it has to happen
+              // Dropping the /p/:projectId URL is App's job, not this button's: it has to happen
               // for a session that expires too, which has no button to hang off. See App.tsx.
               onClick={() => signOut()}
               tooltip="Sign out"

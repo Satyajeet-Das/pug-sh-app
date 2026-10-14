@@ -87,23 +87,13 @@ describe('buildPaintCache', () => {
 })
 
 describe('readPaintCache', () => {
-  // The first load after the release must paint what the old cache said.
-  it('reads a version 1 cache as the member’s own', () => {
+  it('carries a version 2 cache’s project paints forward', () => {
+    const p1 = { light: { builtin: 'pug', standard: true }, dark: { builtin: 'pug', standard: true } }
     localStorage.setItem(
       PAINT_CACHE_KEY,
-      JSON.stringify({
-        v: 1,
-        autoContrast: false,
-        light: { builtin: 'pug-colourblind', standard: true },
-        dark: { builtin: 'pug', standard: true },
-      }),
+      JSON.stringify({ v: 2, autoContrast: true, last: 'p1', personal: p1, projects: { p1 } }),
     )
-    expect(readPaintCache()).toEqual({
-      v: 2,
-      autoContrast: false,
-      personal: { light: { builtin: 'pug-colourblind', standard: true }, dark: { builtin: 'pug', standard: true } },
-      projects: {},
-    })
+    expect(readPaintCache()).toEqual({ projects: { p1 }, last: 'p1' })
   })
 
   it('reads nothing from a cache that isn’t one', () => {
@@ -111,11 +101,13 @@ describe('readPaintCache', () => {
     expect(readPaintCache()).toBeNull()
     localStorage.setItem(PAINT_CACHE_KEY, JSON.stringify({ v: 3 }))
     expect(readPaintCache()).toBeNull()
+    localStorage.setItem(PAINT_CACHE_KEY, JSON.stringify({ v: 2, projects: [] }))
+    expect(readPaintCache()).toBeNull()
   })
 })
 
 describe('writePaintCache', () => {
-  // A refused write leaves the old cache in place, and the next load would paint whatever it says —
+  // A refused write leaves the old cache in place, and the next load would paint whatever it says,
   // possibly a theme that has since been removed. With no cache it paints Pug, then React corrects.
   it('drops the old cache when storage refuses the new one', () => {
     localStorage.setItem(

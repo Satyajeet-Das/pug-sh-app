@@ -17,7 +17,7 @@ import {
   type RemoteId,
   remoteEntries,
 } from '@/theme/library'
-import { isUrlTarget, parseReference } from '@/theme/reference'
+import { parseReference } from '@/theme/reference'
 import { type FetchFailure, fetchThemeText } from '@/theme/remote'
 import type { Polarity } from '@/theme/tokens'
 
@@ -26,12 +26,13 @@ export type ThemeMode = 'light' | 'dark' | 'system'
 type StoredAtom = ReturnType<typeof atomWithStorage<unknown>>
 
 /** What to tell someone whose browser refused to save a theme setting. */
-export const STORAGE_REFUSED = 'Couldn’t save that in this browser — storage is full or blocked.'
+export const STORAGE_REFUSED = 'Couldn’t save that in this browser. Storage is full or blocked.'
 
-// A full quota, a blocked profile or a full disk refuses a write by throwing — after atomWithStorage
+// A full quota, a blocked profile or a full disk refuses a write by throwing, after atomWithStorage
 // has already moved memory, so the session would show what the next load won't have. Every theme
-// write goes through here: the writes land in order, and when storage refuses one, all of them are
-// put back. True when everything was saved, false when nothing changed.
+// setting is written through here (the fetched-file cache, being a cache, is not): the writes land in
+// order, and when storage refuses one, all of them are put back. True when everything was saved, false
+// when nothing changed.
 const persist = (get: Getter, set: Setter, writes: [StoredAtom, unknown][]) => {
   const before = writes.map(([stored]) => [stored, get(stored)] as const)
   try {
@@ -42,7 +43,7 @@ const persist = (get: Getter, set: Setter, writes: [StoredAtom, unknown][]) => {
       try {
         set(stored, value)
       } catch {
-        // Storage still refusing — memory is back regardless.
+        // Storage still refusing; memory is back regardless.
       }
     }
     return false
@@ -51,8 +52,8 @@ const persist = (get: Getter, set: Setter, writes: [StoredAtom, unknown][]) => {
 
 // Storage is untrusted input: another build, an older shape after a rollback, or a hand edit can put
 // anything under these keys, and cross-tab sync delivers it straight into the atoms. So every key is a
-// raw storage atom read through a guard — a bad value degrades to the default instead of throwing
-// inside App's render — and written through persist. getOnInit: App renders before storage loads on
+// raw storage atom read through a guard (a bad value degrades to the default instead of throwing
+// inside App's render) and written through persist. getOnInit: App renders before storage loads on
 // mount, and jotai 3 won't re-render it for that.
 const guardedStorage = <T>(key: string, initial: T, guard: (stored: unknown) => T) => {
   const stored: StoredAtom = atomWithStorage<unknown>(key, initial, undefined, { getOnInit: true })
@@ -111,48 +112,45 @@ const installedStore = guardedStorage<InstalledTheme[]>('pug:themes', [], stored
   })
 })
 
-/** Installed theme files, as their original text — re-parsed on load (theme/library.ts). */
+/** Installed theme files, as their original text, re-parsed on load (theme/library.ts). */
 export const installedThemesAtom = installedStore.guarded
+
+const asRecord = (value: unknown) =>
+  typeof value === 'object' && value !== null && !Array.isArray(value) ? (value as Record<string, unknown>) : {}
 
 // ---- Per-project overrides ----
 
-// Storage keys a member's override by project id. Rebuilt rather than trusted: only plain ids holding a
-// reference this build can read survive, so a "__proto__" key in storage can't reach a prototype.
+// Rebuilt rather than trusted: only plain project ids holding a readable reference survive, so a
+// "__proto__" key in storage can't reach a prototype.
 const PROJECT_ID = /^[a-z0-9]{1,64}$/i
-const overridesStore = guardedStorage<Record<string, string>>('pug:theme-project-overrides', {}, stored => {
-  if (typeof stored !== 'object' || stored === null || Array.isArray(stored)) return {}
-  return Object.fromEntries(
-    Object.entries(stored).filter(
-      ([id, value]) => PROJECT_ID.test(id) && typeof value === 'string' && parseReference(value) !== null,
-    ),
-  ) as Record<string, string>
-})
+const overridesStore = guardedStorage<Record<string, string>>(
+  'pug:theme-project-overrides',
+  {},
+  stored =>
+    Object.fromEntries(
+      Object.entries(asRecord(stored)).filter(
+        ([id, value]) => PROJECT_ID.test(id) && typeof value === 'string' && parseReference(value) !== null,
+      ),
+    ) as Record<string, string>,
+)
 
 /** This browser's theme per project, as references, overriding each project's default. */
 export const projectOverridesAtom = overridesStore.guarded
 
 // ---- Theme files fetched by URL ----
 
-export type FetchedTheme = { text: string; hash: string; fetchedAt: number }
+const MAX_FETCHED = 10
 
-/** How many fetched files are kept, for first paint and offline. The least recently fetched go first. */
-export const MAX_FETCHED = 10
+const fetchedStore = guardedStorage<Record<RemoteId, string>>(
+  'pug:theme-remote',
+  {},
+  stored =>
+    Object.fromEntries(
+      Object.entries(asRecord(stored)).filter(([url, text]) => isRemoteId(url) && typeof text === 'string'),
+    ) as Record<RemoteId, string>,
+)
 
-const fetchedStore = guardedStorage<Record<RemoteId, FetchedTheme>>('pug:theme-remote', {}, stored => {
-  if (typeof stored !== 'object' || stored === null || Array.isArray(stored)) return {}
-  const kept = Object.entries(stored).filter(([url, value]) => {
-    const fetched = value as Partial<FetchedTheme> | null
-    return (
-      isRemoteId(url) &&
-      typeof fetched?.text === 'string' &&
-      typeof fetched.hash === 'string' &&
-      typeof fetched.fetchedAt === 'number'
-    )
-  })
-  return Object.fromEntries(kept) as Record<RemoteId, FetchedTheme>
-})
-
-/** The last validated copy of each fetched theme file, by URL. */
+/** The last validated text of each fetched theme file, by URL, the least recently fetched first. */
 export const fetchedThemesAtom = fetchedStore.guarded
 
 export type FetchStatus =
@@ -163,18 +161,15 @@ export type FetchStatus =
 /** How the last fetch of each URL went this session: what the settings pages report. */
 export const fetchStatusAtom = atom<Record<string, FetchStatus>>({})
 
-// The cache with this URL's copy refreshed and moved last, trimmed to the MAX_FETCHED most recent.
-const withFetched = (cache: Record<RemoteId, FetchedTheme>, url: RemoteId, fetched: FetchedTheme) => {
-  const rest = Object.entries(cache).filter(([key]) => key !== url)
-  return Object.fromEntries([...rest, [url, fetched]].slice(-MAX_FETCHED)) as Record<RemoteId, FetchedTheme>
-}
+// The cache with this URL's text moved last, trimmed to the MAX_FETCHED most recent.
+const withFetched = (cache: Record<RemoteId, string>, url: RemoteId, text: string) =>
+  Object.fromEntries([...Object.entries(cache).filter(([key]) => key !== url), [url, text]].slice(-MAX_FETCHED))
 
 const inFlight = new Map<string, Promise<void>>()
 
 /**
- * Fetches a theme file in the background and keeps it when it validates. A copy already cached stays in
- * use until a newer valid one arrives: a broken push, a 404, a network error or a CORS refusal never
- * replaces it. Concurrent calls for one URL share one fetch.
+ * Fetches a theme file and keeps it when it validates; a failed fetch never replaces a cached copy.
+ * Concurrent calls for one URL share one fetch.
  */
 export const refreshFetchedThemeAtom = atom(null, (get, set, url: RemoteId) => {
   const running = inFlight.get(url)
@@ -193,17 +188,10 @@ export const refreshFetchedThemeAtom = atom(null, (get, set, url: RemoteId) => {
       return
     }
     report({ state: 'ok', warnings: check.issues.length })
-    const next = withFetched(get(fetchedThemesAtom), url, {
-      text: fetched.text,
-      hash: check.hash,
-      fetchedAt: Date.now(),
-    })
-    // A cache, not a setting: when storage refuses, atomWithStorage has already moved memory, so the copy
-    // serves this session — nothing claimed it was saved — and the next load fetches it again.
     try {
-      set(fetchedStore.stored, next)
+      set(fetchedStore.stored, withFetched(get(fetchedThemesAtom), url, fetched.text))
     } catch {
-      // Memory holds it regardless.
+      // A cache, not a setting: a refused write has already moved memory, so the copy serves this session.
     }
   })().finally(() => inFlight.delete(url))
   inFlight.set(url, run)
@@ -211,7 +199,7 @@ export const refreshFetchedThemeAtom = atom(null, (get, set, url: RemoteId) => {
 })
 
 // The stored list as it is, entries this build can't read included. Installs and removals write onto
-// it, so a theme another build stored — a newer shape, say — survives them.
+// it, so a theme another build stored (a newer shape, say) survives them.
 const storedList = (get: Getter): unknown[] => {
   const raw = get(installedStore.stored)
   return Array.isArray(raw) ? raw : []
@@ -220,8 +208,8 @@ const storedList = (get: Getter): unknown[] => {
 const hasId = (entry: unknown, id: string) =>
   typeof entry === 'object' && entry !== null && (entry as { id?: unknown }).id === id
 
-// An OS-level preference, kept live via matchMedia. Nothing listens while no atom reads it — light
-// and dark mode never ask the OS — so mounting reads the query again before listening.
+// An OS-level preference, kept live via matchMedia. Nothing listens while no atom reads it (light
+// and dark mode never ask the OS), so mounting reads the query again before listening.
 const mediaAtom = (query: string) => {
   const media = atom(typeof window !== 'undefined' && window.matchMedia(query).matches)
   media.onMount = set => {
@@ -240,16 +228,14 @@ const systemMoreContrastAtom = mediaAtom('(prefers-contrast: more)')
 export const themeLibraryAtom = atom(get => buildLibrary(get(installedThemesAtom)))
 
 const fetchedEntriesAtom = atom(get =>
-  remoteEntries(
-    Object.entries(get(fetchedThemesAtom)).map(([url, fetched]) => ({ url: url as RemoteId, text: fetched.text })),
-  ),
+  remoteEntries(Object.entries(get(fetchedThemesAtom)).map(([url, text]) => ({ url: url as RemoteId, text }))),
 )
 
 /** Everything a reference can name: built-ins, installed themes and the fetched files. */
 export const resolvableLibraryAtom = atom(get => [...get(themeLibraryAtom), ...get(fetchedEntriesAtom)])
 
-// This browser's override for the active project, if any.
-const activeOverrideAtom = atom(get => {
+/** This browser's override for the active project. */
+export const activeOverrideAtom = atom(get => {
   const project = get(activeProjectAtom)
   const overrides = get(projectOverridesAtom)
   if (!project || !Object.hasOwn(overrides, project.id)) return undefined
@@ -258,11 +244,10 @@ const activeOverrideAtom = atom(get => {
 
 /** The theme files the active project names, its default and this browser's override, to keep fresh. */
 export const activeThemeUrlsAtom = atom(get => {
-  const urls = [get(activeProjectAtom)?.defaultTheme, get(activeOverrideAtom)]
-    .map(value => (value ? parseReference(value) : null))
-    .filter(reference => reference !== null && isUrlTarget(reference.target))
-    .map(reference => reference?.target as RemoteId)
-  return [...new Set(urls)]
+  const targets = [get(activeProjectAtom)?.defaultTheme, get(activeOverrideAtom)].map(
+    value => value && parseReference(value)?.target,
+  )
+  return [...new Set(targets.filter(isRemoteId))]
 })
 
 /** Which theme the active project shows in this browser, and whether it pins the mode. */
@@ -275,9 +260,8 @@ export const themeChoiceAtom = atom(get =>
   }),
 )
 
-// The concrete light/dark in effect: the active project's pin when it has one, else the mode. Only for
-// code that genuinely branches on the mode — checkout, the share-card plate, the auth glow. Anything
-// that caches colours keys on themeRevisionAtom.
+// The light or dark in effect, a project's pin before the mode. Only for code that branches on the mode
+// (checkout, the share-card plate, the auth glow); anything that caches colours keys on themeRevisionAtom.
 export const resolvedThemeAtom = atom<Polarity>(get => {
   const pin = get(themeChoiceAtom).pin
   if (pin) return pin
@@ -298,10 +282,10 @@ export const compiledThemeAtom = atom(get =>
   ),
 )
 
-/** Content hash of the active theme — the memo key for anything that caches colours. */
+/** Content hash of the active theme: the memo key for anything that caches colours. */
 export const themeRevisionAtom = atom(get => get(compiledThemeAtom).revision)
 
-/** DiceBear disc colours for the active theme, as bare hex — a leading '#' emits fill="##…". */
+/** DiceBear disc colours for the active theme, as bare hex: a leading '#' emits fill="##…". */
 export const avatarPaletteAtom = atom(get => get(compiledThemeAtom).data.avatars.map(hex => hex.slice(1)))
 
 export type InstallResult = InstallCheck | { ok: false; reason: 'storage'; issues: Issue[] }
@@ -317,7 +301,10 @@ export const installThemeAtom = atom(null, (get, set, text: string): InstallResu
   return check
 })
 
-/** Removes an installed theme; a mode that was showing it falls back to Pug. False when storage refused. */
+/**
+ * Removes an installed theme: a mode that was showing it falls back to Pug, and a project override naming it
+ * goes. False when storage refused.
+ */
 export const removeThemeAtom = atom(null, (get, set, id: string) => {
   const writes: [StoredAtom, unknown][] = []
   const selection = get(themeSelectionAtom)
@@ -327,12 +314,15 @@ export const removeThemeAtom = atom(null, (get, set, id: string) => {
       { light: selection.light === id ? 'pug' : selection.light, dark: selection.dark === id ? 'pug' : selection.dark },
     ])
   }
+  const overrides = Object.entries(asRecord(get(overridesStore.stored)))
+  const kept = overrides.filter(([, value]) => typeof value !== 'string' || parseReference(value)?.target !== id)
+  if (kept.length < overrides.length) writes.push([overridesStore.stored, Object.fromEntries(kept)])
   writes.push([installedStore.stored, storedList(get).filter(entry => !hasId(entry, id))])
   return persist(get, set, writes)
 })
 
 /**
- * Chooses the theme for one mode and reports which — a built-in by id, anything installed as 'custom'.
+ * Chooses the theme for one mode and reports which: a built-in by id, anything installed as 'custom'.
  * False when storage refused.
  */
 export const selectThemeAtom = atom(null, (get, set, { polarity, id }: { polarity: Polarity; id: string }) => {
@@ -343,14 +333,13 @@ export const selectThemeAtom = atom(null, (get, set, { polarity, id }: { polarit
 })
 
 /**
- * Sets this browser's theme for one project, as a reference, or clears it with null so the project's
- * default applies again. Reports a built-in by id and anything else as 'custom'. False when storage
- * refused.
+ * Sets this browser's theme for one project as a reference, or clears it with null. Written onto the stored
+ * entries, so ones another build stored survive. False when storage refused.
  */
 export const setProjectOverrideAtom = atom(
   null,
   (get, set, { projectId, reference }: { projectId: string; reference: string | null }) => {
-    const next = { ...get(projectOverridesAtom) }
+    const next = { ...asRecord(get(overridesStore.stored)) }
     if (reference === null) delete next[projectId]
     else next[projectId] = reference
     if (!persist(get, set, [[overridesStore.stored, next]])) return false

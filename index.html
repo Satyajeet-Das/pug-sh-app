@@ -14,7 +14,7 @@
     <link rel="preconnect" href="https://maps.pug.sh" crossorigin />
     <title>Pug</title>
     <script>
-      // Paint the stored theme before first paint. Mirrors src/theme/paint-cache.ts — keep the keys,
+      // Paint the stored theme before first paint. Mirrors src/theme/paint-cache.ts: keep the keys,
       // the cache shape and the auto-contrast rule in sync with it (paint-script.test.ts runs this).
       // Values are applied only in the exact oklch() form the theme compiler writes. The mode and the
       // cache are read apart, so a bad value in one can't stop the other from painting.
@@ -30,9 +30,8 @@
         try {
           cache = JSON.parse(localStorage.getItem('pug:theme-paint') || 'null')
         } catch {}
-        // The paints for this page. Version 2 keeps one per project: the project in the path, or on a page
-        // without one the project painted last, since '/' redirects there. The member's own covers the
-        // rest. A version 1 cache holds only the member's own. Anything else is no cache.
+        // v2: the path's project, or on '/' the last one, since '/' redirects there; else the member's own.
+        // v1 holds only the member's own.
         let entry = null
         let autoContrast = true
         if (cache && cache.v === 1) {
@@ -41,7 +40,8 @@
         } else if (cache && cache.v === 2) {
           const projects = cache.projects && typeof cache.projects === 'object' ? cache.projects : {}
           const match = location.pathname.match(/^\/p\/([^/]+)/)
-          const id = match ? match[1] : cache.last
+          let id = match ? match[1] : null
+          if (location.pathname === '/') id = cache.last
           entry = typeof id === 'string' && Object.hasOwn(projects, id) ? projects[id] : cache.personal
           autoContrast = cache.autoContrast
         }

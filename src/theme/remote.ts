@@ -3,19 +3,18 @@ import { checkThemeText, type RemoteId, type TextCheck } from './library'
 import { parsePastedUrl } from './reference'
 import type { Polarity } from './tokens'
 
-// Fetching a theme file named by URL. Members' browsers fetch a project's default straight from the host
-// the admin chose — GitHub, a CDN, themes.pug.sh — so the request says nothing about the member, and the
-// answer is untrusted: capped at the size an install allows and validated like one.
+// Members' browsers fetch a theme file straight from the host named, so the request says nothing about
+// the member, and the answer is untrusted: capped at the install limit and validated like an install.
 
 export type FetchFailure = 'network' | 'status' | 'too-large' | 'insecure' | 'timeout'
 export type FetchResult = { ok: true; text: string } | { ok: false; reason: FetchFailure; status?: number }
 
-/** How long a theme file may take, its answer and its body together. A host that stalls costs a member this, once. */
+/** How long a theme file may take, its answer and its body together. */
 export const FETCH_TIMEOUT_MS = 10_000
 
 type Fetcher = (url: string, init: RequestInit) => Promise<Response>
 
-// The global fetch, called as a plain function at request time — nothing at module scope.
+// The global fetch, looked up at request time so a test can stub it.
 const browserFetch: Fetcher = (url, init) => fetch(url, init)
 
 // The body, up to MAX_THEME_BYTES. Anything longer is abandoned mid-stream, so a host answering with
@@ -56,10 +55,8 @@ const fetchWithin = async (url: string, fetcher: Fetcher, signal: AbortSignal): 
 }
 
 /**
- * GETs a theme file: no cookies, and no Referer, since dashboard URLs carry project and dashboard ids.
- * 'no-cache' revalidates through the HTTP cache, so an unchanged file costs a 304 and no body. The
- * content type is ignored: raw GitHub serves text/plain and jsDelivr application/octet-stream. A host that
- * stalls, before answering or partway through the body, is given up on after FETCH_TIMEOUT_MS.
+ * GETs a theme file with no cookies and no referrer, revalidating through the HTTP cache. The content type
+ * is ignored: raw GitHub serves text/plain. A stall is given up on after FETCH_TIMEOUT_MS.
  */
 export const fetchThemeText = async (url: string, fetcher = browserFetch): Promise<FetchResult> => {
   if (!url.startsWith('https://')) return { ok: false, reason: 'insecure' }
@@ -82,12 +79,12 @@ export type PastedTheme =
 
 type PastedFailure = Extract<PastedTheme, { ok: false }>
 
-// Which failure says the most when every guess failed. A 404 on the folder guess shouldn't hide that the
-// direct link was refused by CORS.
+// Which failure says the most when every guess failed: a 404 on the folder guess shouldn't hide that the
+// link as written answered with a page, or was refused by CORS.
 const TELLING: Record<PastedFailure['reason'], number> = {
   'not-a-url': 0,
-  'not-json': 1,
-  status: 2,
+  status: 1,
+  'not-json': 2,
   timeout: 3,
   network: 4,
   'too-large': 5,
@@ -105,8 +102,7 @@ const isJson = (text: string) => {
 
 /**
  * Works out which file a pasted URL means: as written, else `<url>/theme.json`. The first answer that is
- * JSON is the file, checked like an install. Its errors block saving rather than send the search
- * further, so a broken theme is reported, not skipped.
+ * JSON is the file, checked like an install, so a broken theme is reported rather than skipped.
  */
 export const resolvePastedTheme = async (input: string, fetcher = browserFetch): Promise<PastedTheme> => {
   const pasted = parsePastedUrl(input)

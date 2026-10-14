@@ -11,8 +11,7 @@ import ThemePicker from '@/pages/routegen/settings/theme-picker'
 import { describeReference, FetchStatusLine, statusOf } from '@/pages/routegen/settings/theme-status'
 import { ignoredPin } from '@/theme/choice'
 
-// A project's default theme: what members see here unless they pick their own for this project, in their
-// own browser. Everyone sees what it is; admins (project:update) set it.
+// Everyone sees the project's default theme; admins (project:update) set it.
 const DefaultTheme = () => {
   const project = useAtomValue(activeProjectAtom)
   const library = useAtomValue(resolvableLibraryAtom)
@@ -28,9 +27,10 @@ const DefaultTheme = () => {
   const ignored = ignoredPin(current, library)
   let summary = 'No default. Members see their own theme.'
   if (described) {
-    // The file's own name, and where members' browsers fetch it from.
     const where = described.host && described.host !== described.name ? ` (${described.host})` : ''
     summary = `${described.name}${where}, ${described.mode}`
+  } else if (current !== '') {
+    summary = 'The saved default can’t be used. Members see their own theme.'
   }
 
   const run = async (reference: string) => {
@@ -58,11 +58,9 @@ const DefaultTheme = () => {
       <Can action="update" resource="project">
         <div className="mt-4 space-y-4">
           <ThemePicker
-            urlId="default-theme-url"
+            shared
             followLabel="Follow each member’s mode"
             saveLabel="Save default theme"
-            includeInstalled={false}
-            disclosure
             saving={saving}
             onSave={reference => void run(reference)}
           />

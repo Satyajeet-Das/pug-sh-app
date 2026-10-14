@@ -131,7 +131,7 @@ describe('the OS colour scheme', () => {
   })
 })
 
-// On by default, so a regression here turns it off for everyone who relies on it — and the first
+// On by default, so a regression here turns it off for everyone who relies on it, and the first
 // paint, which reads the OS itself, would then disagree with React on every load.
 describe('auto contrast', () => {
   afterEach(() => vi.unstubAllGlobals())
@@ -240,7 +240,7 @@ describe('storage that refuses a write', () => {
   })
 })
 
-// Another build — a newer one with themes installed by URL, say — can store entries this one can't
+// Another build (a newer one with themes installed by URL, say) can store entries this one can't
 // read. They are skipped on read, and must survive this build's writes to the same list.
 it("keeps installed entries this build can't read through an install and a removal", () => {
   const foreign = { id: 'installed-ref', url: 'https://example.com/theme.json', source: 'url' }
@@ -257,7 +257,7 @@ it("keeps installed entries this build can't read through an install and a remov
 
 // Storage is untrusted: another build, an older shape after a rollback, or a hand edit can put
 // anything under these keys, and cross-tab sync delivers it straight into the atoms. A bad value
-// must degrade to the default — App reads compiledThemeAtom while rendering, so a throw here is a
+// must degrade to the default: App reads compiledThemeAtom while rendering, so a throw here is a
 // blank app that a reload can't fix.
 describe('malformed storage', () => {
   const pug = { id: 'pug', builtin: true }
@@ -288,7 +288,7 @@ describe('malformed storage', () => {
     expect(store.get(themeLibraryAtom).filter(entry => entry.id === 'pug')).toHaveLength(1)
   })
 
-  // The case above passes without the guard too — an unknown id falls back to Pug further down.
+  // The case above passes without the guard too: an unknown id falls back to Pug further down.
   // This one reads the guard's own output.
   it('reads a selection that is not a string as Pug', () => {
     const store = createStore()
@@ -389,7 +389,7 @@ describe('project themes', () => {
     expect(store.get(fetchStatusAtom)[LINEN]).toEqual({ state: 'ok', warnings: 0 })
   })
 
-  // Review Focus 3: a bad push or a dead host never replaces the copy members are using.
+  // A bad push or a dead host never replaces the copy members are using.
   it('keeps the last good copy when the file breaks or disappears', async () => {
     serve(
       fakeResponse(linenText),
@@ -447,7 +447,7 @@ describe('project themes', () => {
     expect(kept).not.toContain(urls[0])
   })
 
-  // Review Focus 1: a cache, not a setting — the copy serves this session even when storage says no.
+  // A cache, not a setting: the copy serves this session even when storage says no.
   it('still shows a fetched theme this session when storage refuses to keep it', async () => {
     serve(fakeResponse(linenText))
     const store = inProject(`${LINEN}#light`)
@@ -462,7 +462,7 @@ describe('project themes', () => {
     expect(store.get(compiledThemeAtom)).toMatchObject({ id: LINEN })
   })
 
-  // Review Focus 2: the late answer lands in the cache, but the new project paints its own theme.
+  // The late answer lands in the cache, but the new project paints its own theme.
   it('paints the project now active when an earlier project’s fetch lands late', async () => {
     let release: (response: Response) => void = () => {}
     vi.stubGlobal(
@@ -477,15 +477,45 @@ describe('project themes', () => {
     expect(store.get(compiledThemeAtom)).toMatchObject({ id: 'pug-colourblind' })
   })
 
-  // Review Focus 5: storage is untrusted input.
+  // Mounted, as the app has it: getOnInit read storage once, at import.
   it('reads stored overrides it can’t use as none', () => {
     localStorage.setItem('pug:theme-project-overrides', '{"p1":"pug#dim","__proto__":"pug","p2":7}')
     const store = inProject('pug-colourblind')
+    store.sub(projectOverridesAtom, () => {})
     expect(store.get(projectOverridesAtom)).toEqual({})
     expect(store.get(compiledThemeAtom)).toMatchObject({ id: 'pug-colourblind' })
   })
 
   it('treats a project default this build can’t read as none', () => {
     expect(inProject('pug#dim').get(compiledThemeAtom)).toMatchObject({ id: 'pug' })
+  })
+
+  it('lets a pin beat the member’s own mode, both ways', () => {
+    const store = inProject('pug#dark')
+    store.set(themeModeAtom, 'light')
+    expect(store.get(resolvedThemeAtom)).toBe('dark')
+    store.set(activeProjectAtom, create(ProjectSchema, { id: 'p1', displayName: 'P', defaultTheme: 'pug#light' }))
+    store.set(themeModeAtom, 'dark')
+    expect(store.get(resolvedThemeAtom)).toBe('light')
+  })
+
+  // Installs keep what another build stored; overrides have to as well.
+  it('keeps overrides this build can’t read when it saves one', () => {
+    localStorage.setItem('pug:theme-project-overrides', JSON.stringify({ p2: 'gh:acme/brand' }))
+    const store = inProject('')
+    store.sub(projectOverridesAtom, () => {})
+    store.set(setProjectOverrideAtom, { projectId: 'p1', reference: 'pug' })
+    expect(JSON.parse(localStorage.getItem('pug:theme-project-overrides') ?? 'null')).toEqual({
+      p2: 'gh:acme/brand',
+      p1: 'pug',
+    })
+  })
+
+  it('drops overrides naming a theme it removes', () => {
+    const store = inProject('')
+    store.set(installedThemesAtom, [grape])
+    store.set(setProjectOverrideAtom, { projectId: 'p1', reference: `${grape.id}#dark` })
+    store.set(removeThemeAtom, grape.id)
+    expect(store.get(projectOverridesAtom)).toEqual({})
   })
 })

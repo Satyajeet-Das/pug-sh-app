@@ -2,10 +2,8 @@ import type { LibraryEntry } from './library'
 import { parseReference } from './reference'
 import type { Polarity } from './tokens'
 
-// Which theme a member sees in a project: their override for it, else the project's default, else their
-// own choice, else Pug. A reference that can't be used yet — an unknown id, an installed theme that's gone
-// or broken, a URL with no validated copy — is skipped. The winner's pin fixes the mode when its family
-// has that variant; chooseActive then applies auto-contrast and the missing-variant fallback.
+// Override, then project default, then the member's own. A reference with no usable theme yet is skipped,
+// and a pin counts only when the family has that variant.
 
 export type ChoiceSource = 'override' | 'project' | 'personal'
 
@@ -37,7 +35,7 @@ export const chooseTheme = (input: {
 }
 
 /** The pin a reference names that its file has no variant for: it's ignored, and an admin should hear so. */
-export const ignoredPin = (value: string, library: LibraryEntry[]): Polarity | null => {
+export const ignoredPin = (value: string, library: LibraryEntry[]) => {
   const reference = parseReference(value)
   if (!reference?.pin) return null
   const family = usableFamily(reference.target, library)

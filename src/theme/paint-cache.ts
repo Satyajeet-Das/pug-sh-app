@@ -3,10 +3,8 @@ import { compileOnce } from './compile'
 import { chooseActive, type LibraryEntry } from './library'
 import { POLARITIES, type Polarity } from './tokens'
 
-// What the index.html script paints before React loads: each project with a theme of its own, plus the
-// member's own for everything else. Both modes are cached because the OS can flip between visits. Keep the
-// key, the shape and the auto-contrast rule in sync with that script — paint-script.test.ts runs the real
-// one against this output.
+// What index.html paints before React: each project with a theme of its own, and the member's own, both
+// modes each. Keep the key, shape and auto-contrast rule in sync with it (paint-script.test.ts).
 
 export const PAINT_CACHE_KEY = 'pug:theme-paint'
 
@@ -22,12 +20,10 @@ export type PaintCache = {
   autoContrast: boolean
   /** The project visited most recently, while it has a theme of its own: what `/` paints, since it redirects there. */
   last?: string
-  /** The member's own choice: pages outside a project, projects on it, and projects not cached yet. */
+  /** The member's own choice, for every page without a project paint. */
   personal: ModePaints
   projects: Record<string, ProjectPaint>
 }
-
-const FALLBACK: Paint = { builtin: 'pug', standard: true }
 
 const paintsFor = (selection: Record<Polarity, string>, library: LibraryEntry[]): ModePaints => {
   const paintFor = (polarity: Polarity): Paint => {
@@ -41,27 +37,23 @@ const paintsFor = (selection: Record<Polarity, string>, library: LibraryEntry[])
   return { light, dark }
 }
 
-/** The stored cache, or null. A version 1 cache, one paint per mode, reads as the member's own. */
-export const readPaintCache = (): PaintCache | null => {
+type Carried = Pick<PaintCache, 'projects' | 'last'>
+
+/** The project paints a stored version 2 cache carries forward, or null. */
+export const readPaintCache = (): Carried | null => {
   try {
     const raw = JSON.parse(localStorage.getItem(PAINT_CACHE_KEY) ?? 'null')
-    if (raw?.v === 2 && typeof raw.projects === 'object' && raw.projects !== null) return raw as PaintCache
-    if (raw?.v === 1) {
-      return {
-        v: 2,
-        autoContrast: raw.autoContrast !== false,
-        personal: { light: raw.light ?? FALLBACK, dark: raw.dark ?? FALLBACK },
-        projects: {},
-      }
-    }
+    const { projects, last } = raw?.v === 2 ? raw : {}
+    if (typeof projects !== 'object' || projects === null || Array.isArray(projects)) return null
+    return { projects, last: typeof last === 'string' ? last : undefined }
   } catch {
     // Unreadable is the same as absent.
+    return null
   }
-  return null
 }
 
 export const buildPaintCache = (input: {
-  previous: PaintCache | null
+  previous: Carried | null
   projectId: string | null
   choice: ThemeChoice
   personal: Record<Polarity, string>
@@ -99,7 +91,7 @@ export const writePaintCache = (cache: PaintCache) => {
     localStorage.setItem(PAINT_CACHE_KEY, JSON.stringify(cache))
   } catch {
     // Private mode or a full quota. A refused write leaves the old cache, which may name a theme
-    // that's gone — drop it, so the next load paints Pug and React corrects it.
+    // that's gone: drop it, so the next load paints Pug and React corrects it.
     try {
       localStorage.removeItem(PAINT_CACHE_KEY)
     } catch {

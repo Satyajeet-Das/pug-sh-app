@@ -224,11 +224,11 @@ describe('the default theme', () => {
 
   afterEach(() => vi.unstubAllGlobals())
 
-  it('shows everyone what the default is, and only admins the picker', () => {
+  it('shows everyone what the default is, and only admins the controls', () => {
     mountWith(OrgRole.VIEWER, 'pug-colourblind#dark')
     expect(screen.getByText('Pug Colourblind-safe, always dark')).toBeTruthy()
-    expect(screen.queryByRole('button', { name: 'Save default theme' })).toBeNull()
     expect(screen.queryByLabelText('Theme URL')).toBeNull()
+    expect(screen.queryByRole('button', { name: 'Clear default' })).toBeNull()
   })
 
   it('saves a pinned built-in and puts the stored project back into the workspace', async () => {
@@ -247,15 +247,17 @@ describe('the default theme', () => {
     expect(store.get(projectsAtom)[0].defaultTheme).toBe('pug-colourblind#dark')
   })
 
-  // Review Focus 5: stored through the API, a reference the URL parser refuses is unreadable here, never a
-  // crash, and the admin can still clear it.
-  it('renders a default it can’t read, and offers to clear it', () => {
-    mountWith(OrgRole.ADMIN, 'https://themes.pug.sh:99999/t.json')
-    expect(screen.getByText('No default. Members see their own theme.')).toBeTruthy()
-    expect(screen.getByRole('button', { name: 'Clear default' })).toBeTruthy()
-  })
+  // An id this build doesn't have, or a URL the URL parser refuses: never a crash, and the admin can clear it.
+  it.each(['pug-colorblind', 'https://themes.pug.sh:99999/t.json'])(
+    'says %j can’t be used, and offers to clear it',
+    value => {
+      mountWith(OrgRole.ADMIN, value)
+      expect(screen.getByText('The saved default can’t be used. Members see their own theme.')).toBeTruthy()
+      expect(screen.getByRole('button', { name: 'Clear default' })).toBeTruthy()
+    },
+  )
 
-  // Review Focus 4: the page says why, and the workspace keeps what it had.
+  // The page says why, and the workspace keeps what it had.
   it('keeps the project as it was when the save is refused', async () => {
     const toastError = vi.spyOn(toast, 'error').mockImplementation(() => '')
     updateMeta.mockRejectedValue(
@@ -276,9 +278,10 @@ describe('the default theme', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Clear default' }))
     fireEvent.click(screen.getByRole('button', { name: 'Clear the default?' }))
     await waitFor(() => expect(store.get(activeProjectAtom)?.defaultTheme).toBe(''))
+    expect(updateMeta).toHaveBeenCalledWith({ defaultTheme: '' }, { headers: { 'x-project-id': 'doomed' } })
   })
 
-  // Review Focus 3, the admin's half: a dead file is reported where it can be fixed.
+  // A dead file is reported where it can be fixed.
   it('tells the admin why the default’s file failed its last check', async () => {
     vi.stubGlobal(
       'fetch',

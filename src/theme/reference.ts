@@ -1,13 +1,7 @@
 import type { Polarity } from './tokens'
 
-// A theme reference names a theme as one string, for a project's default and for a member's override
-// alike:
-//
-//   reference := target [ "#" pin ]      pin := "light" | "dark"
-//   target    := a built-in id | an installed id (this browser only) | an https URL of a format-v1 file
-//
-// A pin makes the project always that mode; without one the theme follows each member's mode. HTTP
-// never sends the fragment, so a file and its pinned forms share one download and one cache entry.
+// A theme reference is `target[#light|#dark]`: a built-in id, an installed id (this browser only) or an
+// https URL of a theme file, and an optional pin. Fetches and caches key on the target alone.
 
 export type ThemeReference = { target: string; pin?: Polarity }
 
@@ -18,8 +12,8 @@ const ID = /^[a-z0-9-]{1,64}$/
 
 export const isUrlTarget = (target: string) => target.startsWith('https://')
 
-// The URL parser has the last word on a URL target. The server's rule can't mirror it — it takes any
-// five-digit port — and every reader of a reference has to agree on which ones are usable.
+// The URL parser has the last word on a URL target: it's what fetch uses, and an override from storage
+// never passed the server's rule.
 const parsesAsHttps = (target: string) => {
   try {
     return new URL(target).protocol === 'https:'
@@ -30,10 +24,7 @@ const parsesAsHttps = (target: string) => {
 
 const isTarget = (target: string) => (isUrlTarget(target) ? parsesAsHttps(target) : ID.test(target))
 
-/**
- * Splits a reference at its first '#'. In a URL an unencoded '#' can only begin the fragment, so one
- * rule serves both kinds of target. Null for an empty string, or anything that isn't a reference.
- */
+/** Splits a reference at its first '#', which in a URL can only begin the fragment. Null for none. */
 export const parseReference = (value: string): ThemeReference | null => {
   if (value.length === 0 || value.length > MAX_REFERENCE_LENGTH) return null
   const at = value.indexOf('#')
@@ -48,8 +39,7 @@ export const parseReference = (value: string): ThemeReference | null => {
 export const formatReference = ({ target, pin }: ThemeReference) => (pin ? `${target}#${pin}` : target)
 
 /**
- * What someone typed into a "Use a URL" box, as the URLs worth trying in order: as written, then as a
- * repository folder (`themes.pug.sh/linen` → `…/linen/theme.json`). Carries any pin the paste had. The
+ * A pasted URL as the URLs to try: as written, then as a folder (`…/linen/theme.json`), with any pin. The
  * URL parser lowercases the host, as the server requires. Null when it can't be an https URL.
  */
 export const parsePastedUrl = (input: string): { urls: string[]; pin?: Polarity } | null => {

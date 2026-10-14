@@ -33,7 +33,7 @@ const SettingsLayout = ({ children }: { children: ReactNode }) => {
   // explaining it is unreachable. Not where there is no billing service: a retry cannot get past it.
   const showBilling = !billing.loaded || (!!billing.error && !billing.unsupported) || !!billing.status?.billingEnabled
 
-  // Settings is hidden in the read-only demo — it exposes the shared demo account's email/password
+  // Settings is hidden in the read-only demo: it exposes the shared demo account's email/password
   // and org config. The sidebar entry is dropped (DEMO_HIDDEN_PATHS in sidebar.tsx); this guards a
   // demo visitor who reaches a /settings URL directly (bookmark, typed, or back button).
   useEffect(() => {
@@ -46,7 +46,7 @@ const SettingsLayout = ({ children }: { children: ReactNode }) => {
   const currentTab = location.match(/\/settings\/([^/]+)/)?.[1]
   const activeTab = SETTINGS_TABS.find(tab => tab.path === currentTab) ?? SETTINGS_TABS[0]
 
-  // Dropped rather than shown empty where billing is off — but never while it is the tab being
+  // Dropped rather than shown empty where billing is off, but never while it is the tab being
   // viewed, or a fresh load draws the bar with nothing highlighted.
   const showBillingTab = activeTab.path === 'billing' || (showBilling && can('read', 'billing'))
   const showSsoTab = activeTab.path === 'sso' || can('read', 'domain')

@@ -1,9 +1,7 @@
 import type { CompiledTheme } from '@/theme/compile'
 
-/**
- * A theme drawn from its own compiled variant — canvas, a card, the three ink tiers and five data dots —
- * so it previews themes that aren't active, which a screenshot of the live page couldn't.
- */
+// A theme drawn from its own compiled variant (canvas, a card, three inks, five data dots), so it can
+// preview themes that aren't active.
 const ThemePreview = ({ compiled }: { compiled: Pick<CompiledTheme, 'vars' | 'data'> }) => {
   const { vars, data } = compiled
   return (

@@ -71,6 +71,14 @@ describe('compileDataPalette', () => {
     expect(compileDataPalette(data, 'dark', 'standard', PUG_CANVAS.dark).events.payment_failed.line).toBe('#123456')
   })
 
+  // A plain object answers "constructor" from its prototype, which hid the theme's own colour for it.
+  it('keeps a colour for an event named after an Object.prototype key', () => {
+    const data = spec({ events: { constructor: color('#123456') }, adapt: false })
+    expect(Object.hasOwn(compileDataPalette(data, 'dark', 'standard', PUG_CANVAS.dark).events, 'constructor')).toBe(
+      true,
+    )
+  })
+
   // Every visitor without a photo wears one of these, so they're part of Pug's look like any token.
   it.each(['light', 'dark'] as const)("keeps Pug's avatar discs exactly in %s", polarity => {
     expect(compileDataPalette(undefined, polarity, 'standard', PUG_CANVAS[polarity]).avatars).toEqual([

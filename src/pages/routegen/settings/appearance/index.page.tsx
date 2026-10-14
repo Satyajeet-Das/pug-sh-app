@@ -35,7 +35,7 @@ const Appearance = () => {
   const library = useAtomValue(themeLibraryAtom)
   const pin = useAtomValue(themeChoiceAtom).pin
   const selectTheme = useSetAtom(selectThemeAtom)
-  // A write the browser refused changed nothing — say so, or the click looks like it did nothing.
+  // A write the browser refused changed nothing: say so, or the click looks like it did nothing.
   const saved = (ok: boolean) => {
     if (!ok) toast.error(STORAGE_REFUSED)
   }
@@ -70,13 +70,13 @@ const Appearance = () => {
         <SectionHeader title="Your theme" description="Used in projects without a default" />
         <div className="space-y-5">
           {POLARITIES.map(polarity => {
-            // The theme selected for this mode, when it can't be used — Pug is showing in its place.
+            // The theme selected for this mode, when it can't be used. Pug is showing in its place.
             const unusable = library.find(entry => entry.id === selection[polarity] && !entry.family)
             const reason = unusable?.issues.find(issue => issue.severity === 'error')?.message
             return (
               <div key={polarity}>
                 <p className="mb-2 text-xs font-medium text-muted-foreground">{ROW_TITLE[polarity]}</p>
-                {/* A labelled group, so a screen reader says which mode a swatch sets — both rows hold a "Pug". */}
+                {/* A labelled group, so a screen reader says which mode a swatch sets: both rows hold a "Pug". */}
                 <div role="group" aria-label={ROW_TITLE[polarity]} className="flex flex-wrap gap-3">
                   {library
                     .filter((entry): entry is UsableEntry => Boolean(entry.family?.variants[polarity]))
@@ -92,7 +92,7 @@ const Appearance = () => {
                 </div>
                 {unusable && (
                   <p className="mt-2 text-xs text-negative">
-                    {unusable.name} can’t be used, so Pug is showing instead{reason ? ` — ${reason}` : '.'}
+                    {unusable.name} can’t be used, so Pug is showing instead{reason ? `: ${reason}` : '.'}
                   </p>
                 )}
               </div>

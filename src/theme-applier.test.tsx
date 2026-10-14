@@ -1,11 +1,12 @@
 import { create } from '@bufbuild/protobuf'
-import { act, render } from '@testing-library/react'
+import { act, render, waitFor } from '@testing-library/react'
 import { createStore, Provider } from 'jotai'
 import { afterEach, describe, expect, it, vi } from 'vitest'
 import { Router } from 'wouter'
 import { memoryLocation } from 'wouter/memory-location'
 import { OrgSchema } from '@/api/genproto/dashboard/orgs/v1/orgs_pb'
 import { type Project, ProjectSchema } from '@/api/genproto/dashboard/projects/v1/projects_pb'
+import { fakeResponse } from '@/test/fake-response'
 import { jwtFor } from '@/test/jwt'
 import { runPaintScript } from '@/test/paint-script'
 
@@ -53,9 +54,15 @@ vi.stubGlobal('matchMedia', (query: string) => ({
 
 const { default: App } = await import('./App')
 const { jwtAtom, refreshTokenAtom } = await import('@/auth/jwt.atoms')
-const { compiledThemeAtom, installThemeAtom, removeThemeAtom, selectThemeAtom, themeModeAtom } = await import(
-  '@/data/theme.atoms'
-)
+const {
+  compiledThemeAtom,
+  fetchStatusAtom,
+  installThemeAtom,
+  removeThemeAtom,
+  selectThemeAtom,
+  setProjectOverrideAtom,
+  themeModeAtom,
+} = await import('@/data/theme.atoms')
 const { activeOrgAtom, activeProjectAtom, bootstrapStatusAtom, commitProjectsAtom } = await import(
   '@/data/workspace.atoms'
 )
@@ -69,20 +76,22 @@ const orgA = create(OrgSchema, { id: 'org-a', displayName: 'Org A' })
 
 type Mount = { path?: string; signedIn?: boolean; settled?: boolean; project?: Project }
 
-// The real App. A settled workspace has its org picked and its project list landed, with `project`
-// active when one is given; an unsettled one is still loading, and stays so.
+// A settled workspace has its org picked and its project list landed, with `project` active when given.
+const settle = (store: ReturnType<typeof createStore>, project?: Project) => {
+  store.set(activeOrgAtom, orgA)
+  store.set(commitProjectsAtom, { orgId: orgA.id, projects: project ? [project] : [] })
+  if (project) store.set(activeProjectAtom, project)
+  store.set(bootstrapStatusAtom, 'ready')
+}
+
+// The real App. An unsettled workspace is still loading, and stays so until a test settles it.
 const mount = ({ path = '/', signedIn = true, settled = true, project }: Mount = {}) => {
   const store = createStore()
   if (signedIn) {
     store.set(refreshTokenAtom, 'refresh-token')
     store.set(jwtAtom, jwtFor('cust-1'))
   }
-  if (signedIn && settled) {
-    store.set(activeOrgAtom, orgA)
-    store.set(commitProjectsAtom, { orgId: orgA.id, projects: project ? [project] : [] })
-    if (project) store.set(activeProjectAtom, project)
-    store.set(bootstrapStatusAtom, 'ready')
-  }
+  if (signedIn && settled) settle(store, project)
   render(
     <Provider store={store}>
       <Router hook={memoryLocation({ path }).hook}>
@@ -101,8 +110,8 @@ afterEach(() => {
   window.history.replaceState(null, '', '/')
 })
 
-// The first-paint script sets <html> once, before React. Everything after that — every mode change,
-// selection and removal — reaches the page only through App, so these render the real one.
+// The first-paint script sets <html> once, before React. Every mode change, selection and removal after
+// that reaches the page only through App, so these render the real one.
 describe('the theme on <html>', () => {
   it('follows the mode as it changes', () => {
     const store = mount()
@@ -171,6 +180,33 @@ describe('the first paint, handed to React', () => {
     expect(root.getAttribute('data-theme')).toBe('pug-colourblind')
   })
 
+  // The cached paint is stale: p1's default was cleared since, so settling has to repaint even though the
+  // theme React holds didn't change.
+  it('repaints when the workspace settles on a project with no theme now', () => {
+    localStorage.setItem(
+      PAINT_CACHE_KEY,
+      JSON.stringify({
+        v: 2,
+        autoContrast: false,
+        personal: { light: pug, dark: pug },
+        projects: { p1: { light: colourblind, dark: colourblind } },
+      }),
+    )
+    window.history.replaceState(null, '', '/p/p1/overview')
+    runPaintScript()
+    const store = mount({ path: '/p/p1/overview', settled: false })
+    act(() => settle(store, create(ProjectSchema, { id: 'p1', displayName: 'First' })))
+    expect(root.hasAttribute('data-theme')).toBe(false)
+  })
+
+  it('keeps the project’s paint for the next load', () => {
+    mount({ path: '/p/p1/overview', project: pinned })
+    expect(JSON.parse(localStorage.getItem(PAINT_CACHE_KEY) ?? 'null')).toMatchObject({
+      last: 'p1',
+      projects: { p1: { pin: 'dark', dark: colourblind } },
+    })
+  })
+
   // Neither has a workspace coming: the shared route mounts no bootstrap, and signing out resets it.
   it('paints the member’s own on a shared dashboard', () => {
     root.classList.add('dark')
@@ -182,5 +218,44 @@ describe('the first paint, handed to React', () => {
     root.classList.add('dark')
     mount({ signedIn: false })
     expect(root.classList.contains('dark')).toBe(false)
+  })
+})
+
+describe('theme files a project names', () => {
+  const LINEN = 'https://themes.pug.sh/linen/theme.json'
+  const linen = JSON.stringify({
+    version: 1,
+    name: 'Linen',
+    variants: { light: { colors: { background: '#f3eee4' } } },
+  })
+
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('fetches the files the project names, and paints one once it lands', async () => {
+    const fetcher = vi.fn(async () => fakeResponse(linen))
+    vi.stubGlobal('fetch', fetcher)
+    const store = mount({
+      path: '/p/p1/overview',
+      project: create(ProjectSchema, { id: 'p1', displayName: 'First', defaultTheme: `${LINEN}#light` }),
+    })
+    await waitFor(() => expect(inline()).toHaveLength(TOKENS.length))
+    const override = 'https://themes.pug.sh/other/theme.json'
+    act(() => {
+      store.set(setProjectOverrideAtom, { projectId: 'p1', reference: override })
+    })
+    await waitFor(() => expect(fetcher).toHaveBeenCalledWith(override, expect.anything()))
+    expect(fetcher).toHaveBeenCalledWith(LINEN, expect.anything())
+  })
+
+  // An admin who fixed the host saves the same file again, and that has to ask for it again.
+  it('fetches again when the project is saved with the same file', async () => {
+    const DOWN = 'https://themes.pug.sh/down/theme.json'
+    const fetcher = vi.fn(async () => fakeResponse('', { status: 503 }))
+    vi.stubGlobal('fetch', fetcher)
+    const project = () => create(ProjectSchema, { id: 'p1', displayName: 'First', defaultTheme: DOWN })
+    const store = mount({ path: '/p/p1/overview', project: project() })
+    await waitFor(() => expect(store.get(fetchStatusAtom)[DOWN]).toMatchObject({ state: 'failed' }))
+    act(() => store.set(activeProjectAtom, project()))
+    await waitFor(() => expect(fetcher).toHaveBeenCalledTimes(2))
   })
 })

@@ -105,8 +105,8 @@ describe('buildLibrary', () => {
     expect(buildLibrary([])[0]).toMatchObject({ id: 'pug', builtin: true, name: 'Pug' })
   })
 
-  // Installed text is re-parsed on every load, so a stricter parser — or a rollback to a build that
-  // predates the theme's version — can stop reading a theme someone is using. That must not be
+  // Installed text is re-parsed on every load, so a stricter parser (or a rollback to a build that
+  // predates the theme's version) can stop reading a theme someone is using. That must not be
   // invisible: it is named as before, and it leaves a trace.
   it('names a theme that stopped parsing, and says so in the console', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
@@ -141,7 +141,12 @@ describe('checkInstall', () => {
     expect(checkInstall(` ${grape.text}\n`, [first.theme])).toMatchObject({ ok: false, reason: 'duplicate' })
     const full = Array.from(
       { length: MAX_INSTALLED },
-      (_, i): InstalledTheme => ({ ...first.theme, id: `installed-t${i}`, hash: `h${i}` }),
+      (_, i): InstalledTheme => ({
+        ...first.theme,
+        id: `installed-t${i}`,
+        hash: `h${i}`,
+        text: grape.text.replace('Grape', `T${i}`),
+      }),
     )
     expect(checkInstall(grape.text, full)).toMatchObject({ ok: false, reason: 'full' })
   })
@@ -157,6 +162,18 @@ describe('checkInstall', () => {
       ok: false,
       reason: 'duplicate',
     })
+  })
+
+  // A theme installed by an earlier build carries the hash that build computed.
+  it('treats a file installed under an older hash as already installed', () => {
+    const file = JSON.stringify({
+      version: 1,
+      name: 'Ev',
+      variants: { dark: { data: { events: { signin: '#50fa7b' } } } },
+    })
+    const first = checkInstall(file, [])
+    if (!first.ok) throw new Error(JSON.stringify(first.issues))
+    expect(checkInstall(file, [{ ...first.theme, hash: 'older' }])).toMatchObject({ ok: false, reason: 'duplicate' })
   })
 
   // A button fill at 10% opacity measured 4.7:1 against itself as if it were solid; its text
@@ -218,7 +235,7 @@ describe('remoteEntries', () => {
   })
 
   // compileOnce keys on the family object alone, so a fetched file must not share one with an identical
-  // installed file — the compiled theme would carry the wrong id.
+  // installed file, or the compiled theme would carry the wrong id.
   it('parses a fetched file apart from an identical installed one', () => {
     const [remote] = remoteEntries([{ url, text: grape.text }])
     const installed = buildLibrary([grape]).find(entry => entry.id === grape.id)

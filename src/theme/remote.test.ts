@@ -77,8 +77,8 @@ describe('fetchThemeText', () => {
     expect(cancel).toHaveBeenCalled()
   })
 
-  // A host can take the connection and then say nothing, or trickle. Either costs a member the deadline,
-  // once, and is reported as slow rather than as a CORS refusal.
+  // A host can take the connection and then say nothing, or trickle. Either is given up on at the
+  // deadline and reported as slow rather than as a CORS refusal.
   describe('from a host that stalls', () => {
     beforeEach(() => vi.useFakeTimers())
     afterEach(() => vi.useRealTimers())
@@ -151,6 +151,16 @@ describe('resolvePastedTheme', () => {
     expect(await resolvePastedTheme('https://cdn.example.com/brand.json', fetcher)).toEqual({
       ok: false,
       reason: 'network',
+    })
+  })
+
+  it('says a page isn’t a theme file rather than report the folder guess’s 404', async () => {
+    const fetcher = vi.fn(async (url: string) =>
+      url.endsWith('/theme.json') ? fakeResponse('', { status: 404 }) : fakeResponse('<!doctype html>'),
+    )
+    expect(await resolvePastedTheme('https://acme.dev/themes/linen', fetcher)).toEqual({
+      ok: false,
+      reason: 'not-json',
     })
   })
 

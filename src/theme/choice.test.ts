@@ -1,4 +1,4 @@
-import { describe, expect, it } from 'vitest'
+import { describe, expect, it, vi } from 'vitest'
 import { chooseTheme, ignoredPin } from './choice'
 import { buildLibrary, type InstalledTheme, remoteEntries } from './library'
 
@@ -60,6 +60,15 @@ describe('chooseTheme', () => {
 
   it('falls from an override it can’t use to the project’s default', () => {
     expect(chooseTheme({ override: 'installed-gone', projectDefault: 'pug', personal, library }).source).toBe('project')
+  })
+
+  it('skips a theme that is listed but broken', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const broken = 'https://themes.pug.sh/broken/theme.json' as const
+    const withBroken = [...library, ...remoteEntries([{ url: broken, text: '{' }])]
+    expect(chooseTheme({ override: broken, projectDefault: 'pug', personal, library: withBroken }).source).toBe(
+      'project',
+    )
   })
 })
 

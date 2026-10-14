@@ -22,6 +22,7 @@ const {
   projectOverridesAtom,
   refreshFetchedThemeAtom,
   STORAGE_REFUSED,
+  setProjectOverrideAtom,
   themeModeAtom,
   themeSelectionAtom,
 } = await import('@/data/theme.atoms')
@@ -57,7 +58,7 @@ describe('Settings → Appearance', () => {
     expect(store.get(themeModeAtom)).toBe('dark')
   })
 
-  // Swatches are real buttons, named by their theme, carrying their state — and each
+  // Swatches are real buttons, named by their theme, carrying their state, and each
   // row is a labelled group, or a screen reader hears "Pug, pressed" twice with nothing to say which
   // mode either one sets.
   it('offers each built-in as a pressable button inside a labelled group per mode', () => {
@@ -69,7 +70,7 @@ describe('Settings → Appearance', () => {
     }
   })
 
-  // A pressed swatch used to differ from the rest by one pixel of border colour — the one cue the
+  // A pressed swatch used to differ from the rest by one pixel of border colour, the one cue the
   // colourblind and high-contrast themes' own users are least able to see. It carries a mark too.
   it('marks the selected swatch with more than colour', () => {
     mount()
@@ -114,7 +115,7 @@ describe('Settings → Appearance', () => {
   })
 
   // Reads finish in any order. A slow file landing after a newer pick used to install itself over that
-  // pick's report — the person is left looking at a theme they moved on from.
+  // pick's report, and the person is left looking at a theme they moved on from.
   it('lets only the latest pick land when an earlier read finishes last', async () => {
     const store = mount()
     let release = () => {}
@@ -197,7 +198,7 @@ describe('Settings → Appearance', () => {
   })
 
   // An ignored key is not a contrast problem. A file whose only issue is a typo'd key used to be
-  // offered with "some colours may be hard to read" — and installed as a copy of Pug.
+  // offered with "some colours may be hard to read" and installed as a copy of Pug.
   it('tells ignored keys apart from colours that may be hard to read', async () => {
     mount()
     pick(JSON.stringify({ version: 1, name: 'Typo', variants: { dark: { colours: { background: '#1e1b2e' } } } }))
@@ -281,10 +282,41 @@ describe('This project', () => {
     expect(store.get(projectOverridesAtom)).toEqual({})
   })
 
-  // Review Focus 5: a reference from a newer build renders as none, not as a crash.
-  it('renders a stored reference it can’t read as no default', () => {
-    inProject('pug#dim')
-    expect(screen.getByText('No project default, using your theme')).toBeTruthy()
+  // A reference from a newer build, or an id set through the API: nothing will load it, so no "Loading".
+  it.each(['pug#dim', 'pug-colorblind'])('says a default it can’t use, %j, couldn’t load', defaultTheme => {
+    inProject(defaultTheme)
+    expect(screen.getByText('Couldn’t load this project’s theme. Showing your theme instead.')).toBeTruthy()
+  })
+
+  it('says why the member’s own file for the project isn’t showing', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => fakeResponse('', { status: 404 })),
+    )
+    const url = 'https://themes.pug.sh/mine/theme.json'
+    const store = inProject('')
+    act(() => {
+      store.set(setProjectOverrideAtom, { projectId: 'p1', reference: url })
+    })
+    await act(() => store.set(refreshFetchedThemeAtom, url))
+    expect(screen.getByText('Last check failed: the host answered 404.')).toBeTruthy()
+  })
+
+  // Linen has no dark variant, so its pin is ignored and the mode is the member's.
+  it('describes the mode in effect, not a pin that was ignored', async () => {
+    const linen = JSON.stringify({
+      version: 1,
+      name: 'Linen',
+      variants: { light: { colors: { background: '#f3eee4' } } },
+    })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => fakeResponse(linen)),
+    )
+    const url = 'https://themes.pug.sh/linen/theme.json'
+    const store = inProject(`${url}#dark`)
+    await act(() => store.set(refreshFetchedThemeAtom, url))
+    expect(screen.getByText('Project default: Linen, follows each member’s mode')).toBeTruthy()
   })
 
   it('keeps the member’s own rows under Your theme', () => {

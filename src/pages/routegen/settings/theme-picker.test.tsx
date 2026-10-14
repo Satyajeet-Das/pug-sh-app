@@ -15,19 +15,16 @@ const grape: InstalledTheme = {
   source: 'file',
 }
 
-const mount = ({ includeInstalled = false } = {}) => {
+const mount = ({ shared = true } = {}) => {
   const onSave = vi.fn()
   const store = createStore()
   store.set(installedThemesAtom, [grape])
   render(
     <Provider store={store}>
       <ThemePicker
-        urlId="theme-url"
+        shared={shared}
         followLabel="Follow each member’s mode"
         saveLabel="Save default theme"
-        includeInstalled={includeInstalled}
-        disclosure
-        saving={false}
         onSave={onSave}
       />
     </Provider>,
@@ -61,13 +58,13 @@ describe('ThemePicker', () => {
     expect(onSave).toHaveBeenCalledWith('pug-colourblind#dark')
   })
 
-  it('offers installed themes only when asked', () => {
+  it('leaves installed themes out of a project’s default', () => {
     mount()
     expect(within(screen.getByRole('group', { name: 'Themes' })).queryByRole('button', { name: 'Grape' })).toBeNull()
   })
 
   it('pins a single-variant installed theme to its only mode', () => {
-    const onSave = mount({ includeInstalled: true })
+    const onSave = mount({ shared: false })
     pickSwatch('Grape')
     expect(screen.getByText('Grape has only a dark variant.')).toBeTruthy()
     fireEvent.click(screen.getByRole('button', { name: 'Save default theme' }))
@@ -91,6 +88,19 @@ describe('ThemePicker', () => {
     expect(onSave).toHaveBeenCalledWith('https://raw.githubusercontent.com/acme/brand/main/clay.json#light')
   })
 
+  it('drops a pasted pin the file has no variant for', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => fakeResponse(clay)),
+    )
+    const onSave = mount()
+    check('example.com/clay.json#dark')
+    fireEvent.click(await screen.findByRole('button', { name: 'Use this theme' }))
+    expect(screen.getByRole('button', { name: 'Always light' }).getAttribute('aria-pressed')).toBe('true')
+    fireEvent.click(screen.getByRole('button', { name: 'Save default theme' }))
+    expect(onSave).toHaveBeenCalledWith('https://example.com/clay.json#light')
+  })
+
   it('says why a URL can’t be used, and offers nothing to use', async () => {
     vi.stubGlobal(
       'fetch',
@@ -101,7 +111,7 @@ describe('ThemePicker', () => {
     mount()
     check('cdn.example.com/brand.json')
     expect(
-      await screen.findByText('Couldn’t load it. The host may not let other sites read the file (CORS).'),
+      await screen.findByText('Couldn’t reach the host, or it doesn’t let other sites read the file (CORS).'),
     ).toBeTruthy()
     expect(screen.queryByRole('button', { name: 'Use this theme' })).toBeNull()
   })

@@ -6,8 +6,6 @@ import { buildLibrary, checkInstall } from './library'
 import { buildPaintCache, PAINT_CACHE_KEY } from './paint-cache'
 import { POLARITIES, TOKENS } from './tokens'
 
-// Runs the real inline script from index.html — the one piece of theming that executes before any
-// module loads, and the one that trusts localStorage.
 const root = document.documentElement
 const media = (matches: Record<string, boolean>) =>
   vi.stubGlobal('matchMedia', (query: string) => ({ matches: matches[query] ?? false, media: query }))
@@ -82,7 +80,7 @@ describe('the first-paint script', () => {
     expect(root.hasAttribute('data-theme')).toBe(false)
   })
 
-  it('swaps in High Contrast when the OS asks — on a first visit too', () => {
+  it('swaps in High Contrast when the OS asks, on a first visit too', () => {
     media({ '(prefers-contrast: more)': true })
     paint()
     expect(root.getAttribute('data-theme')).toBe('pug-high-contrast')
@@ -140,7 +138,7 @@ describe('the first-paint script', () => {
     expect(root.hasAttribute('data-theme')).toBe(false)
   })
 
-  // A broken cache is the same as none: Pug, with High Contrast if the OS asks — not a script that
+  // A broken cache is the same as none: Pug, with High Contrast if the OS asks, not a script that
   // stops halfway through.
   it('swaps in High Contrast under a cache that is not JSON', () => {
     media({ '(prefers-contrast: more)': true })
@@ -216,6 +214,14 @@ describe('the first-paint script, per project', () => {
     expect(root.getAttribute('data-theme')).toBe('pug-colourblind')
   })
 
+  // Nothing else redirects there, and React paints the member's own on these pages.
+  it.each(['/shared/s1', '/magic-link', '/oauth/callback', '/demo'])('paints the member’s own on %s', path => {
+    v2({ last: 'p1', personal: { light: colourblind, dark: pug }, projects: { p1: { light: pug, dark: pug } } })
+    at(path)
+    paint()
+    expect(root.getAttribute('data-theme')).toBe('pug-colourblind')
+  })
+
   it('lets a pin beat the mode, both ways', () => {
     v2({ projects: { p1: { pin: 'dark', light: pug, dark: pug } } })
     localStorage.setItem('pug:theme', JSON.stringify('light'))
@@ -230,7 +236,7 @@ describe('the first-paint script, per project', () => {
     expect(root.classList.contains('dark')).toBe(false)
   })
 
-  // Review Focus 5: the path is untrusted input too.
+  // The path is untrusted input too.
   it('never reads a project paint off the prototype', () => {
     v2({ personal: { light: colourblind, dark: pug } })
     at('/p/__proto__/overview')

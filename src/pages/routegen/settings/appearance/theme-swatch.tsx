@@ -26,7 +26,7 @@ const ThemeSwatch = ({
       onClick={onSelect}
       className={cn(
         'flex w-36 flex-col gap-2 rounded-lg border p-1.5 text-left transition-colors',
-        // Selected reads by shape as well as colour — a heavier ring and a check — since this page is
+        // Selected reads by shape as well as colour (a heavier ring and a check), since this page is
         // where colourblind and high-contrast readers come to pick a theme.
         selected ? 'border-ring ring-1 ring-ring' : 'border-border hover:border-muted-foreground/50',
       )}

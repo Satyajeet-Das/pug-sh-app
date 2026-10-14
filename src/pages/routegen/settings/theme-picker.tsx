@@ -6,11 +6,11 @@ import { cn } from '@/lib/utils'
 import ThemeSwatch from '@/pages/routegen/settings/appearance/theme-swatch'
 import ThemeUrlField from '@/pages/routegen/settings/theme-url-field'
 import type { ThemeFamily } from '@/theme/format'
-import { isInstalledId, type UsableEntry } from '@/theme/library'
+import type { UsableEntry } from '@/theme/library'
 import { formatReference } from '@/theme/reference'
 import { POLARITIES, type Polarity } from '@/theme/tokens'
 
-type Target = { id: string; name: string; family: ThemeFamily }
+type Target = { id: string; family: ThemeFamily }
 type ModeChoice = 'follow' | Polarity
 
 // The one variant a single-variant family has. Picking such a family pins it, or its other mode would
@@ -20,26 +20,19 @@ const onlyVariant = (family: ThemeFamily) => {
   return variants.length === 1 ? variants[0] : null
 }
 
-/**
- * Picks a theme reference: a built-in (or, for a member, an installed theme) or a file by URL, and
- * whether it follows the mode or pins one. Shared by a project's default (Settings → General) and a
- * member's override for one project (Settings → Appearance).
- */
+// Picks a theme reference and its mode. `shared` is a project's default, which every member's browser
+// loads: no installed themes, and the URL's host is disclosed.
 const ThemePicker = ({
-  urlId,
+  shared,
   followLabel,
   saveLabel,
-  includeInstalled,
-  disclosure,
-  saving,
+  saving = false,
   onSave,
 }: {
-  urlId: string
+  shared: boolean
   followLabel: string
   saveLabel: string
-  includeInstalled: boolean
-  disclosure: boolean
-  saving: boolean
+  saving?: boolean
   onSave: (reference: string) => void
 }) => {
   const library = useAtomValue(themeLibraryAtom)
@@ -49,13 +42,10 @@ const ThemePicker = ({
 
   const pick = (next: Target, pin?: Polarity) => {
     setTarget(next)
-    setChoice(pin ?? onlyVariant(next.family) ?? 'follow')
+    setChoice(pin && next.family.variants[pin] ? pin : (onlyVariant(next.family) ?? 'follow'))
   }
   const previewMode = (family: ThemeFamily) => (family.variants[mode] ? mode : (onlyVariant(family) ?? mode))
-  const entries = library.filter(
-    (entry): entry is UsableEntry =>
-      entry.family !== null && (entry.builtin || (includeInstalled && isInstalledId(entry.id))),
-  )
+  const entries = library.filter((entry): entry is UsableEntry => entry.family !== null && (entry.builtin || !shared))
   const choices: [ModeChoice, string][] = [
     ['follow', followLabel],
     ['light', 'Always light'],
@@ -64,9 +54,7 @@ const ThemePicker = ({
   const single = target ? onlyVariant(target.family) : null
 
   const save = () => {
-    if (!target) return
-    if (choice === 'follow') onSave(formatReference({ target: target.id }))
-    else onSave(formatReference({ target: target.id, pin: choice }))
+    if (target) onSave(formatReference({ target: target.id, pin: choice === 'follow' ? undefined : choice }))
   }
 
   return (
@@ -78,21 +66,17 @@ const ThemePicker = ({
             entry={entry}
             polarity={previewMode(entry.family)}
             selected={target?.id === entry.id}
-            onSelect={() => pick({ id: entry.id, name: entry.name, family: entry.family })}
+            onSelect={() => pick(entry)}
           />
         ))}
       </div>
-      <ThemeUrlField
-        id={urlId}
-        disclosure={disclosure}
-        onUse={file => pick({ id: file.url, name: file.family.name, family: file.family }, file.pin)}
-      />
+      <ThemeUrlField disclosure={shared} onUse={file => pick({ id: file.url, family: file.family }, file.pin)} />
       {target && (
         <div className="space-y-3">
-          <p className="text-sm">{target.name}</p>
+          <p className="text-sm">{target.family.name}</p>
           {single && (
             <p className="text-xs text-muted-foreground">
-              {target.name} has only a {single} variant.
+              {target.family.name} has only a {single} variant.
             </p>
           )}
           <div

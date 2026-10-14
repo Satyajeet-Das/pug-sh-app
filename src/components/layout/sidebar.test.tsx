@@ -144,7 +144,7 @@ describe('the sidebar on mobile', () => {
     act(() => {
       store.set(activeProjectAtom, create(ProjectSchema, { id: 'p1', displayName: 'First', defaultTheme: 'pug#dark' }))
     })
-    const button = screen.getByRole('button', { name: 'dark' })
+    const button = screen.getByRole('button', { name: 'Always dark' })
     expect(button.getAttribute('aria-disabled')).toBe('true')
     fireEvent.click(button)
     expect(store.get(themeModeAtom)).toBe('system')

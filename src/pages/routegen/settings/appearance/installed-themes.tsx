@@ -95,7 +95,7 @@ const InstalledThemes = () => {
   const fileRef = useRef<HTMLInputElement>(null)
   const pickRef = useRef(0)
   const [pending, setPending] = useState<Pending | null>(null)
-  // The row whose issues are open — expanded in place, one at a time.
+  // The row whose issues are open, expanded in place, one at a time.
   const [openId, setOpenId] = useState<string | null>(null)
 
   const commit = (text: string) => {
@@ -121,7 +121,7 @@ const InstalledThemes = () => {
     }
     const text = await file.text()
     // Reads finish in any order: a large file picked first can land after a small one picked next,
-    // and would replace that pick's report — or install itself over it.
+    // and would replace that pick's report, or install itself over it.
     if (seq !== pickRef.current) return
     const check = checkInstall(text, installed)
     if (check.ok && check.issues.length === 0) commit(text)
