@@ -59,7 +59,7 @@ const formatSeen = (value: Profile['activity'] extends infer T ? T : never, key:
   return <HoverSwap primary={formatRelative(date)} secondary={formatDateTime(date)} />
 }
 
-// Counts wrap between pairs, never inside one — that's what lets the column shrink.
+// Counts wrap between pairs, never inside one. That's what lets the column shrink.
 const ActivitySummary = ({ activity }: { activity: Profile['activity'] }) => {
   const parts = [
     { value: activity?.pageviews ?? 0, label: 'views' },
@@ -314,7 +314,7 @@ const Profiles = () => {
     if (project) fetchProfilesPage()
   }, [project, fetchProfilesPage])
 
-  // Refetches page one, dropping any pages loaded via "Load more" — same reset the Retry buttons do.
+  // Refetches page one, dropping any pages loaded via "Load more", as the Retry buttons do.
   // trackFeature sits here rather than in fetchProfilesPage() because that also runs on mount and on
   // every filter change; only this handler is a deliberate click. Named explicitly since an icon-only
   // button autocaptures as tag `svg` with no text.
@@ -354,7 +354,7 @@ const Profiles = () => {
           {/* Sits in the sticky bar, not the page header, so it stays reachable once you scroll. The
               ml-4 keeps the icon off the filter controls: butted straight against them, it reads as
               one of their controls rather than an action on the table. The timestamp is the only
-              confirmation a refresh returning no new rows can give — it resets to "just now" when
+              confirmation a refresh returning no new rows can give: it resets to "just now" when
               nothing else on screen changes. Mirrors the freshness/reload pair on /live. */}
           <div className="ml-4 flex items-center gap-2 text-xs text-muted-foreground">
             <Button

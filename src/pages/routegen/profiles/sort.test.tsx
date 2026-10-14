@@ -148,8 +148,8 @@ describe('profiles sort', () => {
     expect(argOf(3).pageToken).toBe('T-first-1')
   })
 
-  // The server refuses a page token it can't seek on — one an older server minted, met across a
-  // deploy. Resending it is refused again, so Retry has to start over from the first page, and the
+  // The server refuses a page token it can't seek on (one an older server minted, met across a
+  // deploy). Resending it is refused again, so Retry has to start over from the first page, and the
   // toast mustn't hand a dashboard user the API's wording.
   it('retries a refused page token from the first page', async () => {
     const toastError = vi.spyOn(toast, 'error')

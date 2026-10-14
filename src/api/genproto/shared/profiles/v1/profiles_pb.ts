@@ -311,10 +311,10 @@ export type ListRequest = Message<"shared.profiles.v1.ListRequest"> & {
   /**
    * Optional. Traffic tagged as automated at ingest ($bot: crawler user agents
    * and datacenter networks) is EXCLUDED by default. Set true to include bots.
-   * The sort key — first or last seen, or a derived anonymous person's
-   * create_time (its first event) — is computed after this filter, so changing it
-   * mid-pagination skips rows. Keep it constant for a page_token run and restart
-   * from an empty token to flip it.
+   * The sort key (first or last seen, or a derived anonymous person's
+   * create_time, which is its first event) is computed after this filter, so
+   * changing it mid-pagination skips rows. Keep it constant for a page_token run
+   * and restart from an empty token to flip it.
    *
    * @generated from field: bool include_bots = 4;
    */
@@ -430,7 +430,7 @@ export type ProfileActivitySummary = Message<"shared.profiles.v1.ProfileActivity
 
   /**
    * True when EVERY event counted in this summary was tagged as automated at
-   * ingest ($bot) — a crawler, not a user with one tagged event. Only ever true
+   * ingest ($bot): a crawler, not a user with one tagged event. Only ever true
    * on a read that set include_bots, since bot traffic is otherwise excluded.
    *
    * @generated from field: bool bot = 14;
@@ -533,8 +533,8 @@ export const ComplianceRequestStatusSchema: GenEnum<ComplianceRequestStatus> = /
   enumDesc(file_shared_profiles_v1_profiles, 0);
 
 /**
- * ProfileListSort names the ordering of List. Ordering is always descending —
- * newest or most recently active first — with the person id breaking ties.
+ * ProfileListSort names the ordering of List. Ordering is always descending
+ * (newest or most recently active first), with the person id breaking ties.
  *
  * @generated from enum shared.profiles.v1.ProfileListSort
  */
@@ -556,23 +556,23 @@ export enum ProfileListSort {
   CREATE_TIME = 1,
 
   /**
-   * ProfileActivitySummary.first_seen. A person with no recorded activity sorts last.
-   * First seen usually moves earlier mid-pagination, when an identify merges older
-   * anonymous history or an older event is backfilled. That can return the person
-   * twice on that pass. It moves later when a person gets their first event, or
-   * when an anonymous id is identified as another user and its history leaves the
-   * profile. That can miss the person on that pass.
+   * ProfileActivitySummary.first_seen. A person with no recorded activity sorts as
+   * if seen at the epoch. First seen usually moves earlier mid-pagination, when an
+   * identify merges older anonymous history or an older event is backfilled. That
+   * can return the person twice on that pass. It moves later when a person gets
+   * their first event, or when an anonymous id is identified as another user and
+   * its history leaves the profile. That can miss the person on that pass.
    *
    * @generated from enum value: PROFILE_LIST_SORT_FIRST_SEEN = 2;
    */
   FIRST_SEEN = 2,
 
   /**
-   * ProfileActivitySummary.last_seen. A person with no recorded activity sorts last.
-   * A person who becomes active mid-pagination moves above the cursor and is not
-   * returned on that pass; restart from an empty token to see them. Last seen moves
-   * earlier only when an anonymous id is identified as another user and its history
-   * leaves the profile, which can return the person twice.
+   * ProfileActivitySummary.last_seen. A person with no recorded activity sorts as
+   * if seen at the epoch. A person who becomes active mid-pagination moves above
+   * the cursor and is not returned on that pass; restart from an empty token to
+   * see them. Last seen moves earlier when an anonymous id is identified as another
+   * user and its history leaves the profile, which can return the person twice.
    *
    * @generated from enum value: PROFILE_LIST_SORT_LAST_SEEN = 3;
    */
