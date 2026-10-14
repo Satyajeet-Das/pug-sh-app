@@ -1,6 +1,8 @@
 import { create } from '@bufbuild/protobuf'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { Code, ConnectError } from '@connectrpc/connect'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { getDefaultStore } from 'jotai'
+import { toast } from 'sonner'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { trackFeature } from '@/analytics/pug'
 import { GetFilterSchemaResponseSchema } from '@/api/genproto/common/v1/filter_schema_pb'
@@ -40,10 +42,24 @@ const page = (profiles: string[], nextPageToken: string) =>
     yield { profiles: profiles.map(id => create(ProfileSchema, { id })), nextPageToken }
   })()
 
+// A page that answers only once released, so a test can land it after the page has moved on.
+const heldPage = (profiles: string[], nextPageToken: string) => {
+  let release!: () => void
+  const gate = new Promise<void>(resolve => {
+    release = resolve
+  })
+  const stream = (async function* () {
+    await gate
+    yield { profiles: profiles.map(id => create(ProfileSchema, { id })), nextPageToken }
+  })()
+  return { stream, release }
+}
+
 const argOf = (call: number) => list.mock.calls[call][0]
 const sortParam = () => new URLSearchParams(window.location.search).get('sort')
 
 beforeEach(() => {
+  vi.restoreAllMocks()
   list.mockReset()
   getFilterSchema.mockReset().mockResolvedValue(create(GetFilterSchemaResponseSchema, {}))
   vi.mocked(trackFeature).mockClear()
@@ -62,6 +78,8 @@ describe('profiles sort', () => {
     expect(argOf(0).sort).toBe(ProfileListSort.LAST_SEEN)
     expect(argOf(0).pageToken).toBe('')
     expect(screen.getByRole('columnheader', { name: 'Last Seen' }).getAttribute('aria-sort')).toBe('descending')
+    // Only the active column claims a sort, or a screen reader announces both as sorted.
+    expect(screen.getByRole('columnheader', { name: 'First Seen' }).hasAttribute('aria-sort')).toBe(false)
   })
 
   // A page token is bound to the sort it was issued under: the server rejects it under another. A
@@ -87,8 +105,9 @@ describe('profiles sort', () => {
     expect(argOf(2).pageToken).toBe('T2')
   })
 
-  // Re-clicking the active column changes nothing, so it must neither refetch, drop the pages already
-  // loaded, nor count as a sort.
+  // A re-click on the active column must not count as a sort. React already skips a same-value
+  // setSort, so the refetch and Load more checks hold either way; the trackFeature check is the one
+  // handleSort's early return answers for.
   it('leaves pagination intact when the active column is clicked', async () => {
     list.mockImplementationOnce(() => page(['anon-a'], 'T1'))
     render(<Profiles />)
@@ -98,6 +117,62 @@ describe('profiles sort', () => {
     expect(list).toHaveBeenCalledTimes(1)
     expect(screen.getByText('Load more profiles')).toBeTruthy()
     expect(trackFeature).not.toHaveBeenCalled()
+  })
+
+  // The headers stay clickable while a Load more is in flight. If its answer lands after the sort
+  // changed, appending it would mix the old sort's rows in and leave a token the server refuses.
+  it('drops a Load more that lands after the sort changed', async () => {
+    list.mockImplementationOnce(() => page(['anon-a'], 'T-last-1'))
+    render(<Profiles />)
+    await waitFor(() => expect(screen.getByText('Load more profiles')).toBeTruthy())
+
+    const stale = heldPage(['anon-stale'], 'T-last-2')
+    list.mockImplementationOnce(() => stale.stream)
+    fireEvent.click(screen.getByText('Load more profiles'))
+    await waitFor(() => expect(list).toHaveBeenCalledTimes(2))
+
+    list.mockImplementationOnce(() => page(['anon-c'], 'T-first-1'))
+    fireEvent.click(screen.getByRole('button', { name: 'First Seen' }))
+    await waitFor(() => expect(screen.getByText('Load more profiles')).toBeTruthy())
+
+    await act(async () => {
+      stale.release()
+      await new Promise(resolve => setTimeout(resolve, 0))
+    })
+    expect(screen.queryAllByText('anon-stale')).toHaveLength(0)
+
+    list.mockImplementationOnce(() => page(['anon-d'], ''))
+    fireEvent.click(screen.getByText('Load more profiles'))
+    await waitFor(() => expect(list).toHaveBeenCalledTimes(4))
+    expect(argOf(3).sort).toBe(ProfileListSort.FIRST_SEEN)
+    expect(argOf(3).pageToken).toBe('T-first-1')
+  })
+
+  // The server refuses a page token it can't seek on (one an older server minted, met across a
+  // deploy). Resending it is refused again, so Retry has to start over from the first page, and the
+  // toast mustn't hand a dashboard user the API's wording.
+  it('retries a refused page token from the first page', async () => {
+    const toastError = vi.spyOn(toast, 'error')
+    list.mockImplementationOnce(() => page(['anon-a'], 'T1'))
+    render(<Profiles />)
+    await waitFor(() => expect(screen.getByText('Load more profiles')).toBeTruthy())
+
+    list.mockImplementationOnce(() => {
+      throw new ConnectError(
+        'page token was issued for a different sort; restart from an empty token to change it',
+        Code.InvalidArgument,
+      )
+    })
+    fireEvent.click(screen.getByText('Load more profiles'))
+    await waitFor(() => expect(screen.getByText('Retry')).toBeTruthy())
+    expect(toastError).toHaveBeenCalledOnce()
+    expect(String(toastError.mock.calls[0][0])).not.toMatch(/token/)
+
+    list.mockImplementationOnce(() => page(['anon-b'], ''))
+    fireEvent.click(screen.getByText('Retry'))
+    await waitFor(() => expect(list).toHaveBeenCalledTimes(3))
+    expect(argOf(2).pageToken).toBe('')
+    expect(argOf(2).sort).toBe(ProfileListSort.LAST_SEEN)
   })
 
   // Opening a profile and coming Back remounts the page. Filters come back from the URL, so a sort
