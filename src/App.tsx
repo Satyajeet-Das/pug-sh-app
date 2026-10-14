@@ -104,7 +104,7 @@ const FetchedThemeSync = () => {
   return null
 }
 
-// Loads what a signed-in load shows first alongside the workspace instead of after it. Reads the address
+// Preloads what a signed-in load shows first while the workspace boots, not after it. Reads the address
 // bar rather than the router's location, which would rerun this on every navigation.
 const LandingPreload = () => {
   const authenticated = useAtomValue(isAuthenticatedAtom)

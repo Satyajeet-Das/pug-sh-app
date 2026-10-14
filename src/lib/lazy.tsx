@@ -1,4 +1,4 @@
-import { type ComponentType, lazy } from 'react'
+import { type ComponentType, lazy, useState } from 'react'
 
 type Module = { default: ComponentType }
 
@@ -6,11 +6,11 @@ const MAX_RETRIES = 2
 
 const isChunkLoadError = (error: unknown): boolean => {
   if (!(error instanceof Error)) return false
-  return /dynamically imported module|Loading chunk|Failed to fetch|load failed/i.test(error.message)
+  return /dynamically imported module|Loading chunk|Failed to fetch|load failed|preload CSS/i.test(error.message)
 }
 
-// Storage availability is guaranteed by the check in main.tsx, so no defensive try-catch is needed here.
-const loadWithRetry = async (loader: () => Promise<Module>, storageKey: string): Promise<Module> => {
+// sessionStorage needs no try-catch here: main.tsx refuses to start without working storage.
+const loadWithRetry = async (loader: () => Promise<Module>, storageKey: string) => {
   try {
     const module = await loader()
     sessionStorage.removeItem(storageKey)
@@ -59,7 +59,10 @@ export const lazyWithRetry = (loader: () => Promise<Module>, name?: string) => {
   }
   const Lazy = lazy(preload)
   // React.lazy suspends on first render even with its chunk loaded, and React holds a shown fallback 300ms.
-  // Once preload() settles, the module renders directly.
-  const LazyComponent = (props: object) => (loaded ? <loaded.default {...props} /> : <Lazy {...props} />)
+  // Chosen once per mount: a concurrent render can commit <Lazy> resolved, and swapping the type would remount.
+  const LazyComponent = (props: object) => {
+    const [Component] = useState(() => loaded?.default ?? Lazy)
+    return <Component {...props} />
+  }
   return Object.assign(LazyComponent, { preload })
 }

@@ -3,8 +3,8 @@ import { Map as MapLibreMap, type MapOptions, setWorkerUrl } from 'maplibre-gl'
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { compiledThemeAtom } from '@/data/theme.atoms'
-// Here, not in main.tsx: the vendor-maplibre chunk claims this file, so importing it from the entry
-// loaded the whole map library on every page.
+// manualChunks puts this file in vendor-maplibre, so importing it from main.tsx would load the whole map
+// library on every page.
 import 'maplibre-gl/dist/maplibre-gl.css'
 
 // v6 otherwise resolves the worker next to its own chunk, where Vite never emits it.

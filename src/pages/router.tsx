@@ -88,7 +88,7 @@ export const ProjectSync = ({ children }: { children: React.ReactNode }) => {
     )
   }
 
-  // Adopted by the effect above a commit later, so a spinner here would only flash.
+  // The effect above adopts the route's project a commit later, so a spinner here would only flash.
   if (projectId && matchedProject && activeProject?.id !== projectId) return null
 
   // Keyed on the route's project so switching projects remounts the page rather than re-rendering
@@ -109,8 +109,8 @@ export const ProjectRedirect = () => {
   const [location, navigate] = useLocation()
   const search = useSearch()
   // Waits for activeProjectAtom rather than falling back to projects[0] itself. This route is the
-  // one place the URL names no project, so App's bootstrap always has a pick coming, and a second
-  // pick here doesn't just duplicate that one, it beats it: both run off the render where the list
+  // one place the URL names no project, so App's bootstrap always has a pick coming. A second pick
+  // here doesn't just duplicate that one, it beats it: both run off the render where the list
   // arrives, and this effect's captured projects[0] would navigate before the bootstrap's restored
   // project could land, putting the wrong id in the URL for ProjectSync to then adopt back.
   const project = useAtomValue(activeProjectAtom)

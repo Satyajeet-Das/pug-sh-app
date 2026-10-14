@@ -40,17 +40,11 @@ type OverviewSchemaState = {
   projectId: string
   schema: GetFilterSchemaResponse | null
   error: string | null
+  // The boot prefetch, until a fetch adopts it.
+  prefetch?: Promise<GetFilterSchemaResponse>
 }
 
 const overviewSchemaStateAtom = atom<OverviewSchemaState | null>(null)
-
-type SchemaPrefetch = {
-  projectId: string
-  response: Promise<GetFilterSchemaResponse>
-  landed?: GetFilterSchemaResponse
-}
-
-const schemaPrefetchAtom = atom<SchemaPrefetch | null>(null)
 
 // Owned by the project it was fetched for. The page remounts on a project switch but this
 // module-level state doesn't, so an ungated read hands the first commit under the new project the
@@ -60,13 +54,7 @@ const ownedState = (get: Getter) => {
   return state?.projectId === get(activeProjectAtom)?.id ? state : null
 }
 
-const ownedPrefetch = (get: Getter) => {
-  const prefetch = get(schemaPrefetchAtom)
-  return prefetch?.projectId === get(activeProjectAtom)?.id ? prefetch : null
-}
-
-// A landed prefetch counts before the first fetch adopts it, so the page mounts without a spinner.
-export const overviewSchemaAtom = atom(get => ownedState(get)?.schema ?? ownedPrefetch(get)?.landed ?? null)
+export const overviewSchemaAtom = atom(get => ownedState(get)?.schema ?? null)
 export const overviewSchemaErrorAtom = atom(get => ownedState(get)?.error ?? null)
 
 // Asked at boot alongside the workspace. Only for the last project opened in the stored org: a project
@@ -74,16 +62,18 @@ export const overviewSchemaErrorAtom = atom(get => ownedState(get)?.error ?? nul
 export const prefetchOverviewSchemaAtom = atom(null, (get, set, routeProjectId: string | null) => {
   const projectId = get(lastProjectByOrgAtom)[get(lastOrgIdAtom)]
   if (!projectId || (routeProjectId && routeProjectId !== projectId)) return
-  if (get(schemaPrefetchAtom)?.projectId === projectId) return
-  const response = get(insightsRPCAtom).getFilterSchema({}, { headers: { 'x-project-id': projectId } })
-  const prefetch: SchemaPrefetch = { projectId, response }
-  set(schemaPrefetchAtom, prefetch)
-  response.then(
-    landed => {
-      if (get(schemaPrefetchAtom) === prefetch) set(schemaPrefetchAtom, { ...prefetch, landed })
-    },
-    // Reported by the fetch that adopts it.
-    () => {},
+  const current = get(overviewSchemaStateAtom)
+  if (current?.prefetch && current.projectId === projectId) return
+  const prefetch = get(insightsRPCAtom).getFilterSchema({}, { headers: { 'x-project-id': projectId } })
+  const pending = { projectId, schema: null, error: null, prefetch }
+  set(overviewSchemaStateAtom, pending)
+  const settle = (state: OverviewSchemaState | null) => {
+    if (get(overviewSchemaStateAtom) === pending) set(overviewSchemaStateAtom, state)
+  }
+  // A fetch that adopted it reports a failure itself; otherwise drop it, so the first fetch asks again.
+  prefetch.then(
+    schema => settle({ ...pending, schema }),
+    () => settle(null),
   )
 })
 
@@ -95,10 +85,9 @@ export const fetchOverviewSchemaAtom = atom(null, async (get, set) => {
   // over from the last one is already gated out by ownership.
   if (!headers || !projectId) return
   // Only the first fetch adopts the prefetch: a retry, or a later visit, asks again.
-  const prefetch = ownedPrefetch(get)
-  set(schemaPrefetchAtom, null)
-  if (prefetch?.landed) {
-    set(overviewSchemaStateAtom, { projectId, schema: prefetch.landed, error: null })
+  const owned = ownedState(get)
+  if (owned?.prefetch && owned.schema) {
+    set(overviewSchemaStateAtom, { projectId, schema: owned.schema, error: null })
     return
   }
   // Asked but unanswered: a null schema is what the page reads as "still loading". Also clears a
@@ -108,7 +97,7 @@ export const fetchOverviewSchemaAtom = atom(null, async (get, set) => {
   // late reply for the old project overwrites the new one's and the page never leaves the spinner.
   const stale = () => get(activeProjectAtom)?.id !== projectId
   try {
-    const resp = await (prefetch?.response ?? insightsRPC.getFilterSchema({}, { headers }))
+    const resp = await (owned?.prefetch ?? insightsRPC.getFilterSchema({}, { headers }))
     if (stale()) return
     set(overviewSchemaStateAtom, { projectId, schema: resp, error: null })
   } catch (err) {

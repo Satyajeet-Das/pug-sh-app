@@ -18,12 +18,12 @@ vi.mock('@/api/rpc', async () => {
 
 const { activeProjectAtom, lastOrgIdAtom, rememberLastProjectAtom } = await import('@/data/workspace.atoms')
 const { jwtAtom } = await import('@/auth/jwt.atoms')
-const { fetchOverviewSchemaAtom, overviewSchemaAtom, prefetchOverviewSchemaAtom } = await import('./overview.atoms')
+const { fetchOverviewSchemaAtom, overviewSchemaAtom, overviewSchemaErrorAtom, prefetchOverviewSchemaAtom } =
+  await import('./overview.atoms')
 
 const p1 = create(ProjectSchema, { id: 'p1', displayName: 'P1' })
 const schema = create(GetFilterSchemaResponseSchema, { events: [{ name: 'page_view', count: 1n }] })
 
-// A browser whose stored workspace is org-a, last opened on p1.
 const restoring = () => {
   const store = createStore()
   store.set(jwtAtom, jwtFor('cust-1'))
@@ -65,6 +65,20 @@ describe('the overview schema prefetch', () => {
 
     expect(store.get(overviewSchemaAtom)).toBe(schema)
     expect(getFilterSchema).toHaveBeenCalledTimes(1)
+  })
+
+  it('asks again when the prefetch failed before the page adopted it', async () => {
+    getFilterSchema.mockRejectedValueOnce(new Error('offline')).mockResolvedValue(schema)
+    const store = restoring()
+    store.set(prefetchOverviewSchemaAtom, null)
+    await new Promise(resolve => setTimeout(resolve))
+    store.set(activeProjectAtom, p1)
+
+    await store.set(fetchOverviewSchemaAtom)
+
+    expect(store.get(overviewSchemaErrorAtom)).toBeNull()
+    expect(store.get(overviewSchemaAtom)).toBe(schema)
+    expect(getFilterSchema).toHaveBeenCalledTimes(2)
   })
 
   it('leaves alone a project the bootstrap will not restore', () => {

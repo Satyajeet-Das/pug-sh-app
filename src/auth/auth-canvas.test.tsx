@@ -29,7 +29,7 @@ vi.mock('@/analytics/pug', () => ({
   analyticsEnabled: false,
 }))
 
-// A signed-in App preloads the page it lands on, and none of these get that far.
+// A signed-in App preloads its landing page, and the real overview's ~2s import times these out under load.
 vi.mock('@/pages/routegen/overview/index.page', () => ({ default: () => null }))
 
 const App = (await import('@/App')).default
@@ -81,7 +81,7 @@ describe('the auth canvas across a change of screen', () => {
     // Generous: the picker is a lazy chunk, and vitest transforms it on first import.
     await screen.findByText('Pick where to start', {}, { timeout: 5000 })
     // Same node, not merely another one matching: a remount discards the element, and with it the
-    // drift animation's position, and the cards jump back to where they started.
+    // drift animation's position, so the cards jump back to where they started.
     expect(container.querySelector('.auth-wall-track')).toBe(wall)
   })
 

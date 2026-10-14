@@ -43,8 +43,7 @@ for (const [key, loader] of Object.entries(pages).sort(([a], [b]) => compareRout
 
 export const OVERVIEW_ROUTE = '/p/:projectId/overview'
 
-// The route a load of `pathname` ends up on. Like ProjectRedirect, a path no route claims goes to the
-// overview, and a project-less one keeps its page.
+// Like ProjectRedirect: a path no route claims lands on the overview, and a project-less one keeps its page.
 export const landingRoute = (parser: Parser, pathname: string) => {
   if (!pathname.startsWith('/p/')) {
     const kept = `/p/:projectId${pathname}`
