@@ -2,7 +2,7 @@ import { useAtom, useAtomValue, useSetAtom } from 'jotai'
 import { AlertCircle } from 'lucide-react'
 import { Suspense, useEffect, useLayoutEffect, useRef, useState } from 'react'
 import { toast } from 'sonner'
-import { Route, useLocation, useRouter } from 'wouter'
+import { Route, useLocation } from 'wouter'
 import AnalyticsIdentity from '@/analytics/identity'
 import { isAuthenticatedAtom } from '@/auth/auth.atoms'
 import { AuthSplit } from '@/auth/auth-split'
@@ -47,9 +47,7 @@ import {
 } from '@/data/workspace.atoms'
 import { setSeriesPalette } from '@/lib/event-colors'
 import { lazyWithRetry } from '@/lib/lazy'
-import { projectIdOf, useRouteProjectId } from '@/lib/project-path'
-import { prefetchOverviewSchemaAtom } from '@/pages/routegen/overview/overview.atoms'
-import { landingRoute, OVERVIEW_ROUTE, routes } from '@/pages/routes'
+import { useRouteProjectId } from '@/lib/project-path'
 import { applyCompiledTheme } from '@/theme/apply'
 import { buildPaintCache, readPaintCache, writePaintCache } from '@/theme/paint-cache'
 
@@ -101,24 +99,6 @@ const FetchedThemeSync = () => {
   useEffect(() => {
     for (const url of urls) void refresh(url)
   }, [urls, refresh])
-  return null
-}
-
-// Preloads what a signed-in load shows first while the workspace boots, not after it. Reads the address
-// bar rather than the router's location, which would rerun this on every navigation.
-const LandingPreload = () => {
-  const authenticated = useAtomValue(isAuthenticatedAtom)
-  const { parser } = useRouter()
-  const prefetchOverviewSchema = useSetAtom(prefetchOverviewSchemaAtom)
-  useEffect(() => {
-    if (!authenticated) return
-    const { pathname } = window.location
-    void AppSidebar.preload()
-    void Router.preload()
-    const landing = landingRoute(parser, pathname)
-    void routes[landing].component.preload()
-    if (landing === OVERVIEW_ROUTE) prefetchOverviewSchema(projectIdOf(pathname))
-  }, [authenticated, parser, prefetchOverviewSchema])
   return null
 }
 
@@ -457,7 +437,6 @@ const App = () => {
       */}
       <AnalyticsIdentity awaitWorkspace={!isSharedRoute} />
       {isSharedRoute ? null : <WorkspaceBootstrap />}
-      {isSharedRoute ? null : <LandingPreload />}
       {content()}
       <Toaster position="bottom-right" />
     </>

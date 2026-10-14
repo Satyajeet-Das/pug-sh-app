@@ -3,17 +3,14 @@ import { Map as MapLibreMap, type MapOptions, setWorkerUrl } from 'maplibre-gl'
 import workerUrl from 'maplibre-gl/dist/maplibre-gl-worker.mjs?worker&url'
 import { useEffect, useMemo, useRef, useState } from 'react'
 import { compiledThemeAtom } from '@/data/theme.atoms'
-// manualChunks puts this file in vendor-maplibre, so importing it from main.tsx would load the whole map
-// library on every page.
-import 'maplibre-gl/dist/maplibre-gl.css'
 
 // v6 otherwise resolves the worker next to its own chunk, where Vite never emits it.
 setWorkerUrl(workerUrl)
 
 // --- The active theme, as the maps need it ---
 
-// Memoised on the compiled theme, so map effects keyed on it run on any theme change (two dark
-// themes included) and on nothing else.
+// Memoised on the compiled theme, so map effects keyed on it run on any theme change — two dark
+// themes included — and on nothing else.
 export const useMapTheme = () => {
   const compiled = useAtomValue(compiledThemeAtom)
   return useMemo(
