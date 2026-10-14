@@ -1,3 +1,4 @@
+import { Code, ConnectError } from '@connectrpc/connect'
 import { useAtomValue } from 'jotai'
 import { ContactRound, Loader2, RefreshCw } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
@@ -287,6 +288,16 @@ const Profiles = () => {
         setNextToken(response.nextPageToken)
       } catch (err) {
         if (requestId !== latestProfilesRequestRef.current) return
+        // On a Load more, InvalidArgument can only be the page token: page one just accepted the same
+        // filters, sort and bots setting. Resending a refused token (one an older server minted, met
+        // across a deploy) is refused again, so Retry starts over from the first page instead.
+        if (pageToken && err instanceof ConnectError && err.code === Code.InvalidArgument) {
+          const message = 'The list changed since it loaded'
+          console.error(`${message}:`, err)
+          setError({ message, pageToken: '' })
+          toast.error(`${message}. Retry reloads it from the top.`)
+          return
+        }
         const fallback = pageToken ? 'Failed to load more profiles' : 'Failed to load profiles'
         setError({ message: fallback, pageToken })
         toastRPCError(err, fallback)
@@ -313,7 +324,8 @@ const Profiles = () => {
   }
 
   // A new sort reloads page one through fetchProfilesPage's dependency on it, since a page token
-  // only seeks under the sort it was issued for. Re-clicking the active column changes nothing.
+  // only seeks under the sort it was issued for. Re-clicking the active column returns early so it
+  // isn't counted as a sort; setSort with the unchanged value would already skip the reload.
   const handleSort = (next: ProfileListSort) => {
     if (next === sort) return
     trackFeature({ featureId: 'profiles.sort', featureName: 'Sort profiles' })

@@ -557,9 +557,11 @@ export enum ProfileListSort {
 
   /**
    * ProfileActivitySummary.first_seen. A person with no recorded activity sorts last.
-   * First seen only moves earlier, when an identify merges older anonymous history
-   * into the profile or an older event is backfilled. That can return the person
-   * twice in one pass.
+   * First seen usually moves earlier mid-pagination, when an identify merges older
+   * anonymous history or an older event is backfilled. That can return the person
+   * twice on that pass. It moves later when a person gets their first event, or
+   * when an anonymous id is identified as another user and its history leaves the
+   * profile. That can miss the person on that pass.
    *
    * @generated from enum value: PROFILE_LIST_SORT_FIRST_SEEN = 2;
    */
@@ -568,7 +570,9 @@ export enum ProfileListSort {
   /**
    * ProfileActivitySummary.last_seen. A person with no recorded activity sorts last.
    * A person who becomes active mid-pagination moves above the cursor and is not
-   * returned on that pass; restart from an empty token to see them.
+   * returned on that pass; restart from an empty token to see them. Last seen moves
+   * earlier only when an anonymous id is identified as another user and its history
+   * leaves the profile, which can return the person twice.
    *
    * @generated from enum value: PROFILE_LIST_SORT_LAST_SEEN = 3;
    */
