@@ -1,10 +1,11 @@
-import type { ComponentType, LazyExoticComponent } from 'react'
+import type { ComponentType } from 'react'
+import { matchRoute, type Parser } from 'wouter'
 import { lazyWithRetry } from '@/lib/lazy'
 
 type PageModule = { default: ComponentType }
 
 type RouteDef = {
-  component: LazyExoticComponent<ComponentType>
+  component: ReturnType<typeof lazyWithRetry>
 }
 
 const pages = import.meta.glob<PageModule>('./routegen/**/index.page.tsx')
@@ -38,4 +39,16 @@ for (const [key, loader] of Object.entries(pages).sort(([a], [b]) => compareRout
       .join('/')
 
   routes[path] = { component: lazyWithRetry(loader, path) }
+}
+
+export const OVERVIEW_ROUTE = '/p/:projectId/overview'
+
+// The route a load of `pathname` ends up on. Like ProjectRedirect, a path no route claims goes to the
+// overview, and a project-less one keeps its page.
+export const landingRoute = (parser: Parser, pathname: string) => {
+  if (!pathname.startsWith('/p/')) {
+    const kept = `/p/:projectId${pathname}`
+    return kept in routes ? kept : OVERVIEW_ROUTE
+  }
+  return Object.keys(routes).find(route => matchRoute(parser, route, pathname)[0]) ?? OVERVIEW_ROUTE
 }

@@ -35,6 +35,7 @@ vi.mock('@/pages/router', () => ({ default: () => null }))
 vi.mock('@/components/layout/sidebar', () => ({ default: () => null }))
 vi.mock('@/pages/shared-dashboard', () => ({ default: () => null }))
 vi.mock('@/pages/sign-in', () => ({ default: () => null }))
+vi.mock('@/pages/routegen/overview/index.page', () => ({ default: () => null }))
 
 // An OS the test can flip, installed before App loads: the theme atoms read the OS when their module
 // is first imported.
