@@ -1,5 +1,13 @@
 import { describe, expect, it, vi } from 'vitest'
-import { buildLibrary, checkInstall, chooseActive, type InstalledTheme, MAX_INSTALLED } from './library'
+import {
+  buildLibrary,
+  checkInstall,
+  checkThemeText,
+  chooseActive,
+  type InstalledTheme,
+  MAX_INSTALLED,
+  remoteEntries,
+} from './library'
 
 const grape: InstalledTheme = {
   id: 'installed-grape' as const,
@@ -97,8 +105,8 @@ describe('buildLibrary', () => {
     expect(buildLibrary([])[0]).toMatchObject({ id: 'pug', builtin: true, name: 'Pug' })
   })
 
-  // Installed text is re-parsed on every load, so a stricter parser — or a rollback to a build that
-  // predates the theme's version — can stop reading a theme someone is using. That must not be
+  // Installed text is re-parsed on every load, so a stricter parser (or a rollback to a build that
+  // predates the theme's version) can stop reading a theme someone is using. That must not be
   // invisible: it is named as before, and it leaves a trace.
   it('names a theme that stopped parsing, and says so in the console', () => {
     const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
@@ -133,9 +141,39 @@ describe('checkInstall', () => {
     expect(checkInstall(` ${grape.text}\n`, [first.theme])).toMatchObject({ ok: false, reason: 'duplicate' })
     const full = Array.from(
       { length: MAX_INSTALLED },
-      (_, i): InstalledTheme => ({ ...first.theme, id: `installed-t${i}`, hash: `h${i}` }),
+      (_, i): InstalledTheme => ({
+        ...first.theme,
+        id: `installed-t${i}`,
+        hash: `h${i}`,
+        text: grape.text.replace('Grape', `T${i}`),
+      }),
     )
     expect(checkInstall(grape.text, full)).toMatchObject({ ok: false, reason: 'full' })
+  })
+
+  // The hash followed the file's order of event colours, so the same theme with two of them swapped
+  // installed as a second copy.
+  it('treats a file with its event colours reordered as already installed', () => {
+    const file = (events: Record<string, string>) =>
+      JSON.stringify({ version: 1, name: 'Ev', variants: { dark: { data: { events } } } })
+    const first = checkInstall(file({ page_view: '#8be9fd', signin: '#50fa7b' }), [])
+    if (!first.ok) throw new Error(JSON.stringify(first.issues))
+    expect(checkInstall(file({ signin: '#50fa7b', page_view: '#8be9fd' }), [first.theme])).toMatchObject({
+      ok: false,
+      reason: 'duplicate',
+    })
+  })
+
+  // A theme installed by an earlier build carries the hash that build computed.
+  it('treats a file installed under an older hash as already installed', () => {
+    const file = JSON.stringify({
+      version: 1,
+      name: 'Ev',
+      variants: { dark: { data: { events: { signin: '#50fa7b' } } } },
+    })
+    const first = checkInstall(file, [])
+    if (!first.ok) throw new Error(JSON.stringify(first.issues))
+    expect(checkInstall(file, [{ ...first.theme, hash: 'older' }])).toMatchObject({ ok: false, reason: 'duplicate' })
   })
 
   // A button fill at 10% opacity measured 4.7:1 against itself as if it were solid; its text
@@ -169,5 +207,46 @@ describe('checkInstall', () => {
     const check = checkInstall(muddy, [])
     expect(check.ok).toBe(true)
     expect(check.issues.some(i => i.rule === 'V2' && i.path.startsWith('variants.light.'))).toBe(true)
+  })
+})
+
+describe('checkThemeText', () => {
+  it('passes a clean file with its hash, and fails one with errors', () => {
+    const clean = checkThemeText(grape.text)
+    expect(clean).toMatchObject({ ok: true, issues: [] })
+    if (clean.ok) expect(clean.hash).toMatch(/^[0-9a-f]{8}$/)
+    expect(checkThemeText('{"version":1}')).toMatchObject({ ok: false })
+  })
+})
+
+describe('remoteEntries', () => {
+  const url = 'https://themes.pug.sh/grape/theme.json' as const
+
+  it('keys a fetched file by its URL, usable when it validates', () => {
+    const [entry] = remoteEntries([{ url, text: grape.text }])
+    expect(entry).toMatchObject({ id: url, builtin: false, name: 'Grape' })
+    expect(entry.family).not.toBeNull()
+  })
+
+  it('keeps one that no longer reads listed, but unusable', () => {
+    vi.spyOn(console, 'warn').mockImplementation(() => {})
+    const [entry] = remoteEntries([{ url, text: '{' }])
+    expect(entry.family).toBeNull()
+  })
+
+  // compileOnce keys on the family object alone, so a fetched file must not share one with an identical
+  // installed file, or the compiled theme would carry the wrong id.
+  it('parses a fetched file apart from an identical installed one', () => {
+    const [remote] = remoteEntries([{ url, text: grape.text }])
+    const installed = buildLibrary([grape]).find(entry => entry.id === grape.id)
+    expect(remote.family).not.toBe(installed?.family)
+  })
+
+  it('gives the same file fetched from two URLs a family each', () => {
+    const [a, b] = remoteEntries([
+      { url, text: grape.text },
+      { url: 'https://cdn.example.com/grape.json', text: grape.text },
+    ])
+    expect(a.family).not.toBe(b.family)
   })
 })

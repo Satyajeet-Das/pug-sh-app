@@ -1,5 +1,5 @@
-// Caches a function of a string key for the session. The engine's keys — palette hexes, installed
-// theme texts — are few, so nothing is ever evicted.
+// Caches a function of a string key for the session. The engine's keys (palette hexes, installed and
+// fetched theme texts) are few, so nothing is ever evicted.
 export const memoize = <T>(fn: (key: string) => T) => {
   const cache = new Map<string, T>()
   return (key: string) => {

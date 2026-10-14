@@ -1,25 +1,29 @@
-import { create } from '@bufbuild/protobuf'
+import { create, isFieldSet } from '@bufbuild/protobuf'
+import { ConnectError } from '@connectrpc/connect'
 import { createStore } from 'jotai'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { ListResponseSchema, OrgSchema } from '@/api/genproto/dashboard/orgs/v1/orgs_pb'
-import { ProjectSchema } from '@/api/genproto/dashboard/projects/v1/projects_pb'
+import { ProjectSchema, UpdateMetaRequestSchema } from '@/api/genproto/dashboard/projects/v1/projects_pb'
+import { rpcErrorMessage } from '@/lib/rpc-error'
 import { jwtFor } from '@/test/jwt'
 
-const { batchGet, projectsCreate, projectsDelete, orgsList, orgsGet, orgsUpdateDisplayName } = vi.hoisted(() => ({
-  batchGet: vi.fn(),
-  projectsCreate: vi.fn(),
-  projectsDelete: vi.fn(),
-  orgsList: vi.fn(),
-  orgsGet: vi.fn(),
-  orgsUpdateDisplayName: vi.fn(),
-}))
+const { batchGet, projectsCreate, projectsDelete, projectsUpdateMeta, orgsList, orgsGet, orgsUpdateDisplayName } =
+  vi.hoisted(() => ({
+    batchGet: vi.fn(),
+    projectsCreate: vi.fn(),
+    projectsDelete: vi.fn(),
+    projectsUpdateMeta: vi.fn(),
+    orgsList: vi.fn(),
+    orgsGet: vi.fn(),
+    orgsUpdateDisplayName: vi.fn(),
+  }))
 
 // The RPC atoms build real ConnectRPC clients over the app's transport at read time. Swap the two
-// this module reads for hand-held fakes, so a test can decide when — and whether — a call resolves.
+// this module reads for hand-held fakes, so a test can decide when (and whether) a call resolves.
 vi.mock('@/api/rpc', async () => {
   const { atom } = await import('jotai')
   return {
-    projectsRPCAtom: atom({ batchGet, create: projectsCreate, delete: projectsDelete }),
+    projectsRPCAtom: atom({ batchGet, create: projectsCreate, delete: projectsDelete, updateMeta: projectsUpdateMeta }),
     orgsRPCAtom: atom({ list: orgsList, get: orgsGet, updateDisplayName: orgsUpdateDisplayName }),
   }
 })
@@ -49,10 +53,12 @@ const {
   refreshOrgsAtom,
   renameOrgAtom,
   resetWorkspaceAtom,
+  saveProjectThemeAtom,
   selectOrgAtom,
   workspaceErrorAtom,
   workspaceSettledAtom,
 } = await import('./workspace.atoms')
+const { trackEvent } = await import('@/analytics/pug')
 
 const org = (id: string) => create(OrgSchema, { id, displayName: id })
 const project = (id: string) => create(ProjectSchema, { id, displayName: id })
@@ -125,7 +131,7 @@ describe('fetchProjectsAtom', () => {
     await pendingA
 
     // Had A's response committed, it would have keyed A's list to B and let a default pick of an
-    // org-A project read as settled — which is what analytics would then report against org B.
+    // org-A project read as settled, which is what analytics would then report against org B.
     expect(store.get(projectsAtom)).toEqual([])
     expect(store.get(workspaceSettledAtom)).toBe(false)
   })
@@ -274,8 +280,8 @@ describe('refreshOrgsAtom', () => {
 
     await store.set(refreshOrgsAtom)
 
-    // The sidebar switcher runs this on mount, so reaching for fetchOrgsAtom here — which answers
-    // the bootstrap question and clears the workspace when it can't — would put every session one
+    // The sidebar switcher runs this on mount, so reaching for fetchOrgsAtom here (which answers
+    // the bootstrap question and clears the workspace when it can't) would put every session one
     // flaky list call from the workspace-error screen. Nothing but the list may move.
     expect(store.get(activeOrgAtom)).toBe(orgA)
     expect(store.get(activeProjectAtom)).toBe(projectsOfA[0])
@@ -369,7 +375,7 @@ describe('lastProjectByOrgAtom', () => {
     // resetModules re-instantiates jwt.atoms alongside it, so the customer id is seeded the same way.
     const { lastProjectByOrgAtom: freshAtom } = await import('./workspace.atoms')
 
-    // No mount, no effects — the value is there at the first synchronous read, which is the whole
+    // No mount, no effects: the value is there at the first synchronous read, which is the whole
     // point: the default pick runs before onMount would have gotten around to loading it. Both reads
     // have to be synchronous for this to pass; a lazy JWT would land an empty stamp here instead,
     // which no longer matches the stored one and reads as no visits.
@@ -380,7 +386,7 @@ describe('lastProjectByOrgAtom', () => {
     // Fresh modules, or this inherits the generation the test above seeded: getOnInit bakes the
     // storage read into the atom at construction, so afterEach's localStorage.clear() cannot undo
     // it. Without this the assertions below are satisfied by that leftover value and keep passing
-    // with the rememberLastProject calls deleted outright — verified, not hypothetical.
+    // with the rememberLastProject calls deleted outright. Verified, not hypothetical.
     vi.resetModules()
     const { jwtAtom } = await import('@/auth/jwt.atoms')
     const { lastProjectByOrgAtom, rememberLastProjectAtom } = await import('./workspace.atoms')
@@ -391,7 +397,7 @@ describe('lastProjectByOrgAtom', () => {
     store.set(rememberLastProjectAtom, { orgId: 'org-a', projectId: 'a1' })
     store.set(jwtAtom, jwtFor('cust-2'))
 
-    // Keyed by org alone this came back 'a1' — the first account's project, restored for the second,
+    // Keyed by org alone this came back 'a1': the first account's project, restored for the second,
     // and then overwritten by the second's own next visit.
     expect(store.get(lastProjectByOrgAtom)).toEqual({})
 
@@ -416,12 +422,99 @@ describe('lastProjectByOrgAtom', () => {
     // account's visits would hand every account the same stale pick.
     expect(store.get(freshAtom)).toEqual({})
 
-    // And the first write replaces it outright rather than leaving it alongside — no second shape
+    // And the first write replaces it outright rather than leaving it alongside: no second shape
     // under this key waiting for the next reader.
     store.set(rememberLastProjectAtom, { orgId: 'org-a', projectId: 'a1' })
     expect(JSON.parse(localStorage.getItem('pug:lastProjectByOrg') ?? '{}')).toEqual({
       customerId: 'cust-1',
       byOrg: { 'org-a': 'a1' },
     })
+  })
+})
+
+describe('saveProjectThemeAtom', () => {
+  const one = create(ProjectSchema, { id: 'p1', displayName: 'One', orgId: 'org-a' })
+  const two = create(ProjectSchema, { id: 'p2', displayName: 'Two', orgId: 'org-a' })
+  const inOne = () => {
+    const store = createStore()
+    store.set(projectsAtom, [one, two])
+    store.set(activeProjectAtom, one)
+    return store
+  }
+
+  beforeEach(() => vi.mocked(trackEvent).mockClear())
+
+  // Only default_theme goes out: UpdateMeta is a partial update, and resending the name could overwrite
+  // one an admin just changed elsewhere. What comes back is the stored project, renamed or not.
+  it('sends only default_theme and puts the stored project back into the workspace', async () => {
+    const stored = create(ProjectSchema, {
+      id: 'p1',
+      displayName: 'One, renamed',
+      orgId: 'org-a',
+      defaultTheme: 'pug#dark',
+    })
+    projectsUpdateMeta.mockResolvedValue({ project: stored })
+    const store = inOne()
+    await store.set(saveProjectThemeAtom, 'pug#dark')
+    expect(projectsUpdateMeta).toHaveBeenCalledWith({ defaultTheme: 'pug#dark' }, { headers: { 'x-project-id': 'p1' } })
+    expect(store.get(activeProjectAtom)).toBe(stored)
+    expect(store.get(projectsAtom)).toEqual([stored, two])
+    expect(trackEvent).toHaveBeenCalledWith('project_theme_set', { kind: 'builtin', pinned: true })
+  })
+
+  it('reports a URL or a clear by kind, never the value', async () => {
+    projectsUpdateMeta.mockResolvedValue({})
+    const store = inOne()
+    await store.set(saveProjectThemeAtom, 'https://themes.pug.sh/linen/theme.json')
+    expect(trackEvent).toHaveBeenLastCalledWith('project_theme_set', { kind: 'url', pinned: false })
+    await store.set(saveProjectThemeAtom, '')
+    expect(trackEvent).toHaveBeenLastCalledWith('project_theme_set', { kind: 'cleared', pinned: false })
+    // '' clears only as a set field: omitted, the server leaves the default as it was.
+    const sent = create(UpdateMetaRequestSchema, projectsUpdateMeta.mock.calls[1][0])
+    expect(isFieldSet(sent, UpdateMetaRequestSchema.field.defaultTheme)).toBe(true)
+  })
+
+  // A server without default_theme drops it and answers with the project unchanged.
+  it('refuses a save the server didn’t store', async () => {
+    projectsUpdateMeta.mockResolvedValue({ project: one })
+    const store = inOne()
+    const refused = await store.set(saveProjectThemeAtom, 'pug').catch(err => err)
+    expect(rpcErrorMessage(refused, 'fallback')).toMatch(/can’t store a default theme/)
+    expect(store.get(activeProjectAtom)).toBe(one)
+  })
+
+  // What the transport's own proto check throws for this: Code.Unknown, which rpcErrorMessage reads as "use
+  // the caller's wording", so the page could only say the save failed. The reason has to survive.
+  it('refuses a reference the server won’t store, saying why, without sending it', async () => {
+    projectsUpdateMeta.mockRejectedValue(
+      new ConnectError('default_theme: the host can’t be localhost or an IP address'),
+    )
+    const store = inOne()
+    const refused = await store.set(saveProjectThemeAtom, 'https://localhost:8443/theme.json').catch(err => err)
+    expect(rpcErrorMessage(refused, 'fallback')).toMatch(/localhost or an IP address/)
+    expect(projectsUpdateMeta).not.toHaveBeenCalled()
+    expect(store.get(activeProjectAtom)).toBe(one)
+  })
+
+  it('leaves a project switched to meanwhile as it is', async () => {
+    let answer: (value: unknown) => void = () => {}
+    projectsUpdateMeta.mockReturnValue(new Promise(resolve => (answer = resolve)))
+    const store = inOne()
+    const saving = store.set(saveProjectThemeAtom, 'pug')
+    store.set(activeProjectAtom, two)
+    answer({ project: create(ProjectSchema, { id: 'p1', displayName: 'One', orgId: 'org-a', defaultTheme: 'pug' }) })
+    await saving
+    expect(store.get(activeProjectAtom)).toBe(two)
+    expect(store.get(projectsAtom)[0].defaultTheme).toBe('pug')
+  })
+
+  // A refusal changes nothing here, and reaches the caller to report.
+  it('rethrows a refusal and changes nothing', async () => {
+    projectsUpdateMeta.mockRejectedValue(new Error('refused'))
+    const store = inOne()
+    await expect(store.set(saveProjectThemeAtom, 'pug')).rejects.toThrow('refused')
+    expect(store.get(activeProjectAtom)).toBe(one)
+    expect(store.get(projectsAtom)).toEqual([one, two])
+    expect(trackEvent).not.toHaveBeenCalled()
   })
 })

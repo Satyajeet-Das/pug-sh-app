@@ -19,7 +19,7 @@ export type SeriesColor = {
 const seriesColor = (hex: string): SeriesColor => ({ line: hex, fill: `${hex}1a`, dot: hex })
 
 export const EVENT_COLORS: Record<string, string> = {
-  // navigation + interactions — blue (nav) · cyan (click) · red (degraded)
+  // navigation + interactions: blue (nav) · cyan (click) · red (degraded)
   page_view: '#2563eb',
   screen_view: '#60a5fa',
   scroll: '#3b82f6',
@@ -27,7 +27,7 @@ export const EVENT_COLORS: Record<string, string> = {
   dead_click: '#f87171',
   rage_click: '#dc2626',
 
-  // app lifecycle — indigo (crashes cross to red)
+  // app lifecycle: indigo (crashes cross to red)
   app_install: '#4338ca',
   app_open: '#4f46e5',
   app_close: '#818cf8',
@@ -37,7 +37,7 @@ export const EVENT_COLORS: Record<string, string> = {
   app_crashed: '#991b1b',
   feature_used: '#78716c',
 
-  // auth — slate
+  // auth: slate
   signup: '#334155',
   signin: '#475569',
   signout: '#64748b',
@@ -47,7 +47,7 @@ export const EVENT_COLORS: Record<string, string> = {
   mfa_enabled: '#0f172a',
   mfa_disabled: '#cbd5e1',
 
-  // commerce — emerald (refunds cross to red, discounts to lime)
+  // commerce: emerald (refunds cross to red, discounts to lime)
   product_viewed: '#34d399',
   product_list_viewed: '#6ee7b7',
   add_to_cart: '#10b981',
@@ -62,7 +62,7 @@ export const EVENT_COLORS: Record<string, string> = {
   purchase: '#065f46',
   order_refunded: '#b91c1c',
 
-  // discovery — violet
+  // discovery: violet
   search: '#7c3aed',
   search_result_clicked: '#8b5cf6',
   recommendation_viewed: '#a78bfa',
@@ -70,11 +70,11 @@ export const EVENT_COLORS: Record<string, string> = {
   filter_applied: '#5b21b6',
   sort_changed: '#c4b5fd',
 
-  // forms — teal
+  // forms: teal
   form_start: '#0d9488',
   form_submit: '#0f766e',
 
-  // media (video + audio) — amber
+  // media (video + audio): amber
   video_started: '#fbbf24',
   video_play: '#d97706',
   video_pause: '#f59e0b',
@@ -86,12 +86,12 @@ export const EVENT_COLORS: Record<string, string> = {
   audio_seeked: '#fef08a',
   audio_completed: '#a16207',
 
-  // notifications — pink
+  // notifications: pink
   notification_received: '#db2777',
   notification_clicked: '#ec4899',
   notification_dismissed: '#f9a8d4',
 
-  // chat — sky (failures/blocks cross to red)
+  // chat: sky (failures/blocks cross to red)
   chat_created: '#0284c7',
   chat_joined: '#0ea5e9',
   chat_left: '#7dd3fc',
@@ -123,7 +123,7 @@ export const EVENT_COLORS: Record<string, string> = {
   chat_reaction_added: '#38bdf8',
   chat_reaction_removed: '#bae6fd',
 
-  // billing — yellow (success crosses to green, failure to red)
+  // billing: yellow (success crosses to green, failure to red)
   subscription_started: '#ca8a04',
   subscription_changed: '#eab308',
   subscription_canceled: '#7f1d1d',
@@ -141,7 +141,7 @@ export const EVENT_COLORS: Record<string, string> = {
   trial_converted: '#15803d',
   refund_failed: '#7f1d1d',
 
-  // support — rose
+  // support: rose
   feedback_submitted: '#e11d48',
   nps_submitted: '#be123c',
   survey_started: '#fb7185',
@@ -151,40 +151,40 @@ export const EVENT_COLORS: Record<string, string> = {
   support_chat_started: '#e11d48',
   help_article_viewed: '#fda4af',
 
-  // workspace — stone (deletions cross to red)
+  // workspace: stone (deletions cross to red)
   workspace_created: '#44403b',
   workspace_joined: '#57534e',
   workspace_deleted: '#7f1d1d',
   workspace_role_changed: '#a8a29e',
   workspace_settings_updated: '#78716c',
 
-  // invitations — lime
+  // invitations: lime
   invite_sent: '#84cc16',
   invite_accepted: '#4d7c0f',
 
-  // files / exports — zinc
+  // files / exports: zinc
   file_uploaded: '#52525b',
   file_downloaded: '#71717a',
   export_started: '#3f3f46',
   export_completed: '#27272a',
 
-  // integrations — fuchsia
+  // integrations: fuchsia
   integration_connected: '#c026d3',
   integration_disconnected: '#a21caf',
 
-  // API — purple
+  // API: purple
   api_key_created: '#9333ea',
   api_key_revoked: '#7e22ce',
 
-  // errors — dark red
+  // errors: dark red
   error_occurred: '#b91c1c',
 
-  // sharing — orange
+  // sharing: orange
   share: '#ea580c',
 }
 
 // Breakdown palette (getIndexedColor) and the fallback for unmapped events. A theme replaces it per
-// mode with data.categorical, used exactly as given — Pug's preset lists these through its fit.
+// mode with data.categorical, used exactly as given; Pug's preset lists these through its fit.
 export const FALLBACK_COLORS = [
   '#3b6cf0',
   '#059669',
@@ -201,7 +201,7 @@ export const FALLBACK_COLORS = [
 ]
 
 // Non-well-known kinds borrow their domain family's hue by name prefix, matched against the
-// resolveKind() form. Each palette holds only on-hue shades — outcome crossovers are excluded so a
+// resolveKind() form. Each palette holds only on-hue shades: outcome crossovers are excluded so a
 // benign custom event never inherits "failure red".
 const FAMILIES: { group: GroupName; prefixes: string[]; palette: string[] }[] = [
   { group: 'chat', prefixes: ['chat_'], palette: ['#0284c7', '#0ea5e9', '#38bdf8', '#7dd3fc', '#0369a1', '#075985'] },
@@ -264,7 +264,7 @@ const FAMILIES: { group: GroupName; prefixes: string[]; palette: string[] }[] = 
   { group: 'sharing', prefixes: ['share_'], palette: ['#ea580c', '#f97316', '#c2410c'] },
 ]
 
-// DiceBear disc colours: one shared lightness, hues spread wide. Never fitted — they carry black line
+// DiceBear disc colours: one shared lightness, hues spread wide. Never fitted: they carry black line
 // art and must stay light.
 export const DEFAULT_AVATARS = [
   '#da8282',
@@ -336,7 +336,7 @@ export const groupOf = (event: string): GroupName => {
   if (event.startsWith('integration_')) return 'integrations'
   if (event.startsWith('api_key_')) return 'api'
   if (event === 'share') return 'sharing'
-  throw new Error(`data-palette: "${event}" has no colour group — add it to groupOf`)
+  throw new Error(`data-palette: "${event}" has no colour group; add it to groupOf`)
 }
 
 /** Each group's anchor: the member whose default colour a theme's group value replaces exactly. */
@@ -366,7 +366,7 @@ export const ANCHORS: Record<GroupName, string> = {
 /**
  * Moves one member of a group by the change from the group's default anchor to the theme's value:
  * hue rotated, lightness shifted, chroma scaled, then fitted into sRGB. The group keeps its shape.
- * Chroma scales by the anchor's own, so the anchor itself lands on the value — near-grey anchors
+ * Chroma scales by the anchor's own, so the anchor itself lands on the value, near-grey anchors
  * included, which is what workspace and files have.
  */
 const moveHex = (memberHex: string, anchorHex: string, target: Oklch) => {
@@ -392,7 +392,7 @@ export type CompiledDataPalette = {
 /**
  * Resolves a variant's data colours into the palette getSeriesColor looks up. `canvas` is the resolved
  * background the fit is placed against. A variant without its own categorical colours gets the
- * default breakdown palette through this canvas's fit — on Pug's canvas, exactly Pug's list.
+ * default breakdown palette through this canvas's fit: on Pug's canvas, exactly Pug's list.
  */
 export const compileDataPalette = (
   data: DataSpec | undefined,
@@ -405,7 +405,7 @@ export const compileDataPalette = (
   const fit = adapt ? canvasFit : (hex: string) => hex
   const groupValue = (group: GroupName) => data?.groups[group]
 
-  // A member of a group the theme doesn't move keeps its exact default hex — never a no-op round trip
+  // A member of a group the theme doesn't move keeps its exact default hex, never a no-op round trip
   // through OKLCH, which could flip a byte and break Pug's pixel identity.
   const base = (hex: string, group: GroupName) => {
     const target = groupValue(group)
@@ -418,7 +418,7 @@ export const compileDataPalette = (
     events[event] = seriesColor(fit(override ? toHex(override) : base(hex, groupOf(event))))
   }
   for (const [event, color] of Object.entries(data?.events ?? {})) {
-    if (!events[event]) events[event] = seriesColor(fit(toHex(color)))
+    if (!Object.hasOwn(events, event)) events[event] = seriesColor(fit(toHex(color)))
   }
 
   const families = FAMILIES.map(f => ({
@@ -431,7 +431,7 @@ export const compileDataPalette = (
   return { events, families, categorical: categorical.map(seriesColor), avatars }
 }
 
-// Every group must have its anchor in the map — a renamed event would otherwise silently stop moving.
+// Every group must have its anchor in the map, or a renamed event would silently stop moving.
 for (const group of GROUPS) {
   if (!EVENT_COLORS[ANCHORS[group]]) throw new Error(`data-palette: anchor for ${group} is missing`)
 }

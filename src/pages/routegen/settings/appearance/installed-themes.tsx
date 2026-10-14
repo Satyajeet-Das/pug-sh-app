@@ -12,7 +12,8 @@ import {
   themeLibraryAtom,
 } from '@/data/theme.atoms'
 import { cn } from '@/lib/utils'
-import { type Issue, MAX_THEME_BYTES, tooLargeIssue } from '@/theme/format'
+import { IssueList, warningSummary } from '@/pages/routegen/settings/theme-issues'
+import { MAX_THEME_BYTES, tooLargeIssue } from '@/theme/format'
 import { checkInstall, type InstallCheck, type LibraryEntry } from '@/theme/library'
 import { POLARITIES } from '@/theme/tokens'
 
@@ -36,28 +37,6 @@ const checksLabel = (entry: LibraryEntry) => {
   if (warnings === 0) return null
   return warnings === 1 ? '1 warning' : `${warnings} warnings`
 }
-
-// What a file's warnings are about. An ignored key is not a contrast problem — telling someone a
-// file with a typo'd key "may be hard to read" installs it as a copy of Pug.
-const warningSummary = (issues: Issue[]) => {
-  const lines: string[] = []
-  if (issues.some(issue => issue.rule !== 'V12')) {
-    lines.push('This theme has warnings. It still works, but some colours may be hard to read.')
-  }
-  if (issues.some(issue => issue.rule === 'V12')) lines.push('Parts of this file were ignored — they’re listed below.')
-  return lines.join(' ')
-}
-
-const IssueList = ({ issues }: { issues: Issue[] }) => (
-  <ul className="space-y-1 text-xs">
-    {issues.map((issue, i) => (
-      <li key={i} className={issue.severity === 'error' ? 'text-negative' : 'text-caution'}>
-        {issue.path && <span className="font-mono">{issue.path}: </span>}
-        {issue.message}
-      </li>
-    ))}
-  </ul>
-)
 
 // Confirmation by button state, not a dialog: the first click arms it, the second removes.
 const RemoveButton = ({ onRemove }: { onRemove: () => void }) => {
@@ -116,7 +95,7 @@ const InstalledThemes = () => {
   const fileRef = useRef<HTMLInputElement>(null)
   const pickRef = useRef(0)
   const [pending, setPending] = useState<Pending | null>(null)
-  // The row whose issues are open — expanded in place, one at a time.
+  // The row whose issues are open, expanded in place, one at a time.
   const [openId, setOpenId] = useState<string | null>(null)
 
   const commit = (text: string) => {
@@ -142,7 +121,7 @@ const InstalledThemes = () => {
     }
     const text = await file.text()
     // Reads finish in any order: a large file picked first can land after a small one picked next,
-    // and would replace that pick's report — or install itself over it.
+    // and would replace that pick's report, or install itself over it.
     if (seq !== pickRef.current) return
     const check = checkInstall(text, installed)
     if (check.ok && check.issues.length === 0) commit(text)

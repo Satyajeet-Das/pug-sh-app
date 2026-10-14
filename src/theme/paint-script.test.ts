@@ -1,18 +1,12 @@
-import { readFileSync } from 'node:fs'
-import { join } from 'node:path'
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { CANONICAL_COLOR_RE } from '../lib/color/parse'
+import { runPaintScript as paint, PAINT_SCRIPT as script } from '../test/paint-script'
 import { compileVariant } from './compile'
 import { buildLibrary, checkInstall } from './library'
 import { buildPaintCache, PAINT_CACHE_KEY } from './paint-cache'
 import { POLARITIES, TOKENS } from './tokens'
 
-// Runs the real inline script from index.html — the one piece of theming that executes before any
-// module loads, and the one that trusts localStorage.
-const html = readFileSync(join(process.cwd(), 'index.html'), 'utf8')
-const script = html.match(/<script>\s*(\/\/ Paint the stored theme[\s\S]*?)<\/script>/)?.[1] ?? ''
 const root = document.documentElement
-const paint = () => new Function(script)()
 const media = (matches: Record<string, boolean>) =>
   vi.stubGlobal('matchMedia', (query: string) => ({ matches: matches[query] ?? false, media: query }))
 const cache = (value: unknown) => localStorage.setItem(PAINT_CACHE_KEY, JSON.stringify(value))
@@ -78,7 +72,7 @@ describe('the first-paint script', () => {
   })
 
   it('ignores a cache from another version, or one that is not JSON', () => {
-    cache({ v: 2, autoContrast: false, light: { builtin: 'pug-colourblind', standard: true } })
+    cache({ v: 3, autoContrast: false, light: { builtin: 'pug-colourblind', standard: true } })
     paint()
     expect(root.hasAttribute('data-theme')).toBe(false)
     localStorage.setItem(PAINT_CACHE_KEY, '{')
@@ -86,7 +80,7 @@ describe('the first-paint script', () => {
     expect(root.hasAttribute('data-theme')).toBe(false)
   })
 
-  it('swaps in High Contrast when the OS asks — on a first visit too', () => {
+  it('swaps in High Contrast when the OS asks, on a first visit too', () => {
     media({ '(prefers-contrast: more)': true })
     paint()
     expect(root.getAttribute('data-theme')).toBe('pug-high-contrast')
@@ -144,7 +138,7 @@ describe('the first-paint script', () => {
     expect(root.hasAttribute('data-theme')).toBe(false)
   })
 
-  // A broken cache is the same as none: Pug, with High Contrast if the OS asks — not a script that
+  // A broken cache is the same as none: Pug, with High Contrast if the OS asks, not a script that
   // stops halfway through.
   it('swaps in High Contrast under a cache that is not JSON', () => {
     media({ '(prefers-contrast: more)': true })
@@ -166,7 +160,17 @@ describe('the first-paint script', () => {
     const library = buildLibrary([check.theme])
     const family = library.find(entry => entry.id === check.theme.id)?.family
     if (!family) throw new Error('Duo is not usable')
-    cache(buildPaintCache({ selection: { light: check.theme.id, dark: check.theme.id }, autoContrast: false, library }))
+    const selection = { light: check.theme.id, dark: check.theme.id }
+    cache(
+      buildPaintCache({
+        previous: null,
+        projectId: null,
+        choice: { selection, source: 'personal' },
+        personal: selection,
+        autoContrast: false,
+        library,
+      }),
+    )
 
     for (const polarity of POLARITIES) {
       root.className = ''
@@ -176,5 +180,67 @@ describe('the first-paint script', () => {
       const { vars } = compileVariant({ id: check.theme.id, builtin: false, family, polarity })
       for (const [name, value] of Object.entries(vars)) expect(root.style.getPropertyValue(name)).toBe(value)
     }
+  })
+})
+
+describe('the first-paint script, per project', () => {
+  const at = (path: string) => window.history.replaceState(null, '', path)
+  const pug = { builtin: 'pug', standard: true }
+  const colourblind = { builtin: 'pug-colourblind', standard: true }
+  const v2 = (fields: Record<string, unknown>) =>
+    cache({ v: 2, autoContrast: false, personal: { light: pug, dark: pug }, projects: {}, ...fields })
+
+  afterEach(() => at('/'))
+
+  it('paints the project in the path', () => {
+    v2({ projects: { p1: { light: colourblind, dark: pug } } })
+    at('/p/p1/overview')
+    paint()
+    expect(root.getAttribute('data-theme')).toBe('pug-colourblind')
+  })
+
+  it('paints the member’s own choice for a project it has no paint for', () => {
+    v2({ personal: { light: colourblind, dark: pug }, projects: { p1: { light: pug, dark: pug } } })
+    at('/p/p2/overview')
+    paint()
+    expect(root.getAttribute('data-theme')).toBe('pug-colourblind')
+  })
+
+  // '/' redirects to the last project, so painting the member's own there would switch on every visit.
+  it('paints the last project on a page without one', () => {
+    v2({ last: 'p1', projects: { p1: { light: colourblind, dark: pug } } })
+    at('/')
+    paint()
+    expect(root.getAttribute('data-theme')).toBe('pug-colourblind')
+  })
+
+  // Nothing else redirects there, and React paints the member's own on these pages.
+  it.each(['/shared/s1', '/magic-link', '/oauth/callback', '/demo'])('paints the member’s own on %s', path => {
+    v2({ last: 'p1', personal: { light: colourblind, dark: pug }, projects: { p1: { light: pug, dark: pug } } })
+    at(path)
+    paint()
+    expect(root.getAttribute('data-theme')).toBe('pug-colourblind')
+  })
+
+  it('lets a pin beat the mode, both ways', () => {
+    v2({ projects: { p1: { pin: 'dark', light: pug, dark: pug } } })
+    localStorage.setItem('pug:theme', JSON.stringify('light'))
+    at('/p/p1/overview')
+    paint()
+    expect(root.classList.contains('dark')).toBe(true)
+
+    root.className = ''
+    v2({ projects: { p1: { pin: 'light', light: pug, dark: pug } } })
+    localStorage.setItem('pug:theme', JSON.stringify('dark'))
+    paint()
+    expect(root.classList.contains('dark')).toBe(false)
+  })
+
+  // The path is untrusted input too.
+  it('never reads a project paint off the prototype', () => {
+    v2({ personal: { light: colourblind, dark: pug } })
+    at('/p/__proto__/overview')
+    paint()
+    expect(root.getAttribute('data-theme')).toBe('pug-colourblind')
   })
 })

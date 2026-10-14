@@ -15,7 +15,15 @@ import { SocialNav } from '@/components/social-nav'
 import { Button } from '@/components/ui/button'
 import { SidebarInset, SidebarProvider, SidebarTrigger } from '@/components/ui/sidebar'
 import { Toaster } from '@/components/ui/sonner'
-import { autoContrastAtom, compiledThemeAtom, themeLibraryAtom, themeSelectionAtom } from '@/data/theme.atoms'
+import {
+  activeThemeUrlsAtom,
+  autoContrastAtom,
+  compiledThemeAtom,
+  refreshFetchedThemeAtom,
+  resolvableLibraryAtom,
+  themeChoiceAtom,
+  themeSelectionAtom,
+} from '@/data/theme.atoms'
 import {
   activeOrgAtom,
   activeProjectAtom,
@@ -35,12 +43,13 @@ import {
   resetWorkspaceAtom,
   selectOrgAtom,
   workspaceErrorAtom,
+  workspaceSettledAtom,
 } from '@/data/workspace.atoms'
 import { setSeriesPalette } from '@/lib/event-colors'
 import { lazyWithRetry } from '@/lib/lazy'
 import { useRouteProjectId } from '@/lib/project-path'
 import { applyCompiledTheme } from '@/theme/apply'
-import { buildPaintCache, writePaintCache } from '@/theme/paint-cache'
+import { buildPaintCache, readPaintCache, writePaintCache } from '@/theme/paint-cache'
 
 const AppSidebar = lazyWithRetry(() => import('@/components/layout/sidebar'), 'sidebar')
 const Router = lazyWithRetry(() => import('@/pages/router'), 'router')
@@ -54,28 +63,53 @@ const Demo = lazyWithRetry(() => import('@/pages/demo'), 'demo')
 // Puts the active theme on <html>. A layout effect, so the CSS variables land in the same frame as
 // the series palette App pushes during render. System-mode and contrast changes arrive through the
 // atoms' matchMedia subscriptions.
-const ThemeApplier = () => {
+//
+// Held while a workspace picks its project, or the member's own theme flashes over index.html's paint.
+// awaitWorkspace says whether one is coming: the shared route mounts none.
+const ThemeApplier = ({ awaitWorkspace }: { awaitWorkspace: boolean }) => {
   const compiled = useAtomValue(compiledThemeAtom)
+  const choice = useAtomValue(themeChoiceAtom)
   const selection = useAtomValue(themeSelectionAtom)
   const autoContrast = useAtomValue(autoContrastAtom)
-  const library = useAtomValue(themeLibraryAtom)
-  useLayoutEffect(() => applyCompiledTheme(compiled), [compiled])
-  // What index.html paints on the next load, before React: both modes, since the OS can flip.
+  const library = useAtomValue(resolvableLibraryAtom)
+  const projectId = useAtomValue(activeProjectAtom)?.id ?? null
+  const authenticated = useAtomValue(isAuthenticatedAtom)
+  const settled = useAtomValue(workspaceSettledAtom)
+  const waiting = awaitWorkspace && authenticated && !settled
+  useLayoutEffect(() => {
+    if (!waiting) applyCompiledTheme(compiled)
+  }, [compiled, waiting])
+  // What index.html paints on the next load, before React: this project's theme and the member's own,
+  // both modes each, since the OS can flip.
   useEffect(
-    () => writePaintCache(buildPaintCache({ selection, autoContrast, library })),
-    [selection, autoContrast, library],
+    () =>
+      writePaintCache(
+        buildPaintCache({ previous: readPaintCache(), projectId, choice, personal: selection, autoContrast, library }),
+      ),
+    [projectId, choice, selection, autoContrast, library],
   )
   return null
 }
 
+// Fetches the theme files the active project names whenever it or its references change, saving the same
+// one again included; a cached copy paints meanwhile.
+const FetchedThemeSync = () => {
+  const urls = useAtomValue(activeThemeUrlsAtom)
+  const refresh = useSetAtom(refreshFetchedThemeAtom)
+  useEffect(() => {
+    for (const url of urls) void refresh(url)
+  }, [urls, refresh])
+  return null
+}
+
 // Exported for its tests: a session that ends leaves the address bar naming the project it ended
-// in, and the next account to sign in on this browser inherits it — "Project not found" if they
+// in, and the next account to sign in on this browser inherits it: "Project not found" if they
 // can't see it, someone else's project if they can, and silently, since WorkspaceBootstrap declines
 // to default-pick over a route that names a project the new account *can* see.
 //
 // Owned here rather than by each sign-out button because not every path has a button. The
-// transport's clearSession() — the sole authority on session death, fired when the server rejects
-// the refresh token — reaches no component and cannot navigate for itself, and on a shared machine
+// transport's clearSession() (the sole authority on session death, fired when the server rejects
+// the refresh token) reaches no component and cannot navigate for itself, and on a shared machine
 // that expiry ends more sessions than anyone clicking Sign out.
 //
 // Keyed on the true→false transition, NOT on !authenticated: arriving already signed out is how a
@@ -133,7 +167,7 @@ export const WorkspaceBootstrap = () => {
   // The one place an account switch tears the workspace down, in-tab and cross-tab alike. The JWT
   // syncs across tabs (atomWithStorage listens for storage events); the workspace does not. Sign in
   // as someone else in another tab and this one keeps the previous account's org and project while
-  // every request it sends now carries the new account's token — including the visit it records,
+  // every request it sends now carries the new account's token, including the visit it records,
   // which would file one account's project under the other's stamp and undo the whole point of
   // stamping them. Rebuild instead.
   const knownCustomer = useRef(customerId)
@@ -215,7 +249,7 @@ export const WorkspaceBootstrap = () => {
   }, [status, joinedOrgIds, activeOrg, orgs, setJoinedOrgIds])
 
   // Keyed on the org id, not the org object: renameOrgAtom writes a fresh object for the same org,
-  // and this effect blanks the active project and refetches the list — so a rename would clear the
+  // and this effect blanks the active project and refetches the list, so a rename would clear the
   // sidebar's project list and chip for a round-trip it didn't need. fetchProjects reads the org
   // from the store itself, so the id is all this needs.
   const activeOrgId = activeOrg?.id
@@ -236,7 +270,7 @@ export const WorkspaceBootstrap = () => {
     if (activeProject && projects.some(project => project.id === activeProject.id)) return
     // A /p/:projectId route already names the project it wants, and ProjectSync sets it from there.
     // Defaulting to projects[0] here would win that race and make a project the user never asked for
-    // briefly active for everything watching activeProjectAtom — the page itself is shielded by
+    // briefly active for everything watching activeProjectAtom. The page itself is shielded by
     // ProjectSync's gate, but workspaceSettledAtom isn't, and reports a settled workspace around the
     // wrong project. Only default when the URL has no opinion, or names a project that isn't
     // available (ProjectSync renders "Project not found" and needs a sane fallback behind it).
@@ -256,7 +290,7 @@ export const WorkspaceBootstrap = () => {
 
   // Remember the last project visited per org, to restore when switching orgs. Stamped with the
   // signed-in customer inside the atom, so one account can't be handed the other's project when two
-  // share an org. Only one account's visits are kept — the second's write replaces the first's.
+  // share an org. Only one account's visits are kept: the second's write replaces the first's.
   useEffect(() => {
     if (!activeOrg || !activeProject) return
     rememberLastProject({ orgId: activeOrg.id, projectId: activeProject.id })
@@ -280,8 +314,8 @@ const AuthenticatedApp = () => {
         </header>
         {/*
           data-pug-no-capture blanks the text our own click/dead-click capture would otherwise read
-          out of this subtree. Everything a page renders here belongs to a customer — their
-          end-users' emails and distinct IDs, their property values, their event names — and that
+          out of this subtree. Everything a page renders here belongs to a customer (their
+          end-users' emails and distinct IDs, their property values, their event names), and that
           text has no business in our analytics. Clicks still count; only the free text is dropped,
           and structural fields (tag/id/class/coords) still ride along.
 
@@ -289,7 +323,7 @@ const AuthenticatedApp = () => {
           marker with closest(), so one boundary covers every page that will ever mount here,
           including ones not written yet. Per-region markers would have to be remembered forever,
           and forgetting one puts a third party's PII in our project permanently. The cost is that
-          button labels in here are blanked too — trackFeature() names those explicitly instead.
+          button labels in here are blanked too; trackFeature() names those explicitly instead.
         */}
         <main className="relative flex min-h-0 flex-1 flex-col overflow-x-clip" data-pug-no-capture>
           <Suspense fallback={<LoadingSpinner />}>
@@ -324,7 +358,7 @@ const App = () => {
   setSeriesPalette(compiledTheme.data)
 
   // The public shared-dashboard route renders standalone and must not touch the
-  // authenticated workspace — skip bootstrap so a logged-in viewer's org/project
+  // authenticated workspace: skip bootstrap so a logged-in viewer's org/project
   // RPCs never fire on a public page.
   const isSharedRoute = location.startsWith('/shared/')
   const isMagicLink = location === '/magic-link'
@@ -339,13 +373,13 @@ const App = () => {
     !isSharedRoute &&
     (isMagicLink || isOAuthCallback || isDemoRoute || !authenticated || failed || status === 'needs-selection')
 
-  // Which of the two bootstraps this is, latched from whether an auth screen came first — a
+  // Which of the two bootstraps this is, latched from whether an auth screen came first. A
   // restored session never shows one, so it boots on the plain spinner and never flashes the wall.
   const [afterAuthScreen, setAfterAuthScreen] = useState(onAuthScreen)
   useEffect(() => {
     if (onAuthScreen) setAfterAuthScreen(true)
-    // Cleared once the app is up, or a cross-tab account switch — which resets bootstrap while the
-    // session stays live — would put the wall back over the dashboard.
+    // Cleared once the app is up, or a cross-tab account switch (which resets bootstrap while the
+    // session stays live) would put the wall back over the dashboard.
     else if (status === 'ready') setAfterAuthScreen(false)
   }, [onAuthScreen, status])
 
@@ -377,7 +411,7 @@ const App = () => {
     // One AuthSplit for every signed-out screen, held at a fixed position so a change of screen
     // swaps only its children. The pages used to bring their own, which meant React tore the
     // canvas down between them: the ground changed twice and the wall's drift restarted.
-    // The Suspense sits inside it for the same reason — a page's chunk loads on the canvas.
+    // The Suspense sits inside it for the same reason: a page's chunk loads on the canvas.
     if (onAuthCanvas) {
       return (
         <AuthSplit>
@@ -391,11 +425,12 @@ const App = () => {
 
   return (
     <>
-      <ThemeApplier />
+      <ThemeApplier awaitWorkspace={!isSharedRoute} />
+      <FetchedThemeSync />
       <SessionUrlGuard />
       {/*
         Unconditional, including on the shared route: it issues no workspace RPCs, so it doesn't
-        break that route's rule above — and a signed-in user reading a shared dashboard is a
+        break that route's rule above, and a signed-in user reading a shared dashboard is a
         session worth seeing. Traits are just thinner there, since bootstrap hasn't run, which is
         also why it's told: waiting for a workspace that is never coming would mean never
         identifying. Kept next to the line that decides it so the two can't drift apart.

@@ -14,6 +14,7 @@ import { Input } from '@/components/ui/input'
 import { activeProjectAtom, projectHeaderAtom } from '@/data/workspace.atoms'
 import { toastRPCError } from '@/lib/rpc-error'
 import { browserTimezone } from '@/lib/timezone'
+import DefaultTheme from './default-theme'
 import { DeleteProject } from './delete-project'
 import { TimezonePicker } from './timezone-picker'
 
@@ -64,7 +65,7 @@ const General = () => {
     try {
       // UpdateMeta is a partial update (omitted fields stay unchanged); this form owns both
       // fields, so it sends both. A present empty reportingTimezone ('') resets the zone to
-      // UTC — distinct from omitting it.
+      // UTC, which is distinct from omitting it.
       await projectsRPC.updateMeta(
         { displayName: data.displayName, reportingTimezone: data.reportingTimezone },
         { headers: projectHeaders },
@@ -171,6 +172,7 @@ const General = () => {
           </Can>
         </section>
       )}
+      {project && <DefaultTheme />}
     </div>
   )
 }

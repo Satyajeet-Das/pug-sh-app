@@ -1,13 +1,15 @@
-import { isFieldSet } from '@bufbuild/protobuf'
+import { create, isFieldSet } from '@bufbuild/protobuf'
+import { createValidator } from '@bufbuild/protovalidate'
 import { Code, ConnectError } from '@connectrpc/connect'
 import { atom } from 'jotai'
 import { atomWithStorage } from 'jotai/utils'
-import { trackFeature } from '@/analytics/pug'
+import { trackEvent, trackFeature } from '@/analytics/pug'
 import { type ListResponse, ListResponseSchema, type Org } from '@/api/genproto/dashboard/orgs/v1/orgs_pb'
-import type { Project } from '@/api/genproto/dashboard/projects/v1/projects_pb'
+import { type Project, UpdateMetaRequestSchema } from '@/api/genproto/dashboard/projects/v1/projects_pb'
 import { orgsRPCAtom, projectsRPCAtom } from '@/api/rpc'
 import { customerIdAtom } from '@/auth/jwt.atoms'
 import { browserTimezone } from '@/lib/timezone'
+import { isUrlTarget } from '@/theme/reference'
 
 // Synchronous initial read avoids a first-render flash.
 export const LAST_ORG_ID_KEY = 'pug:lastOrgId'
@@ -122,12 +124,12 @@ export const bootstrapStatusAtom = atom<BootstrapStatus>('idle')
 export const projectsAtom = atom<Project[]>([])
 
 // Which org's project list is loaded, or null while a fetch is in flight or none has run. An empty
-// `projectsAtom` can't answer that on its own — it means both "not fetched yet" and "this org has no
+// `projectsAtom` can't answer that on its own: it means both "not fetched yet" and "this org has no
 // projects", and only the first is worth waiting on. A failed fetch counts as loaded: see the catch
 // in fetchProjectsAtom.
 //
 // Keyed by org rather than a loaded/loading boolean because switching org then invalidates it
-// without anyone remembering to — the key simply stops matching. That covers switches, NOT teardowns
+// without anyone remembering to: the key simply stops matching. That covers switches, NOT teardowns
 // that return to the same org: sign out and back in, and a boolean and a key are equally stale. So
 // every path that clears `projectsAtom` clears this beside it. Module-private to keep that pairing
 // enforceable here; null rather than '' so it can't collide with an Org's own proto-default id.
@@ -147,7 +149,7 @@ export const fetchProjectsAtom = atom(null, async (get, set) => {
   set(activeProjectAtom, null)
   set(projectsOrgIdAtom, null)
   const projectsRPC = get(projectsRPCAtom)
-  // A response outlives the request that asked for it: switch org — or sign out — while batchGet is
+  // A response outlives the request that asked for it: switch org (or sign out) while batchGet is
   // in flight and it resolves into a workspace that has moved on. Committing then doesn't just write
   // the wrong org's list, it keys that list to the org now active, and projectsOrgIdAtom saying "this
   // org's projects have landed" is the one claim workspaceSettledAtom trusts. Drop the response
@@ -202,7 +204,7 @@ export const commitProjectsAtom = atom(
 export const activeProjectAtom = atom<Project | null>(null)
 
 // Whether the active org's project list has landed. Read-only view of projectsOrgIdAtom, which stays
-// module-private so its writes keep their pairing — the ambiguity it resolves ("no projects" vs "not
+// module-private so its writes keep their pairing. The ambiguity it resolves ("no projects" vs "not
 // fetched yet") is one rendering code needs too, or an org with none is indistinguishable from one
 // still loading and gets a spinner that never ends.
 export const projectsLoadedAtom = atom(get => {
@@ -210,14 +212,14 @@ export const projectsLoadedAtom = atom(get => {
   return !!org && get(projectsOrgIdAtom) === org.id
 })
 
-// True once the org and project have stopped resolving on their own — bootstrap has either finished
+// True once the org and project have stopped resolving on their own: bootstrap has either finished
 // picking them or reached a state where it never will.
 //
 // A load walks through several honest-but-incomplete states (no org → org → org + project) a render
 // apart. Anything that *reports* workspace state rather than merely rendering it has to wait for the
-// end of that walk, or it reports each step as though it were the answer; analytics is the consumer
-// this exists for. Rendering code wants the intermediate states and should keep reading the
-// individual atoms.
+// end of that walk, or it reports each step as though it were the answer: analytics, and ThemeApplier,
+// which would otherwise paint each step's theme. Rendering code wants the intermediate states and
+// should keep reading the individual atoms.
 //
 // Only trustworthy while WorkspaceBootstrap is mounted: 'idle' means "bootstrap hasn't started",
 // which from here is indistinguishable from "no bootstrap is coming" (the shared-dashboard route
@@ -225,7 +227,7 @@ export const projectsLoadedAtom = atom(get => {
 //
 // It also can't see ProjectSync adopting the URL's project, which happens after this reports
 // settled. What keeps that honest is App's bootstrap declining to default-pick when the route names
-// a project, so there's only ever one pick — - remove that and this quietly under-reports again.
+// a project, so there's only ever one pick. Remove that and this quietly under-reports again.
 export const workspaceSettledAtom = atom(get => {
   const status = get(bootstrapStatusAtom)
   // The org picker counts as settled only while it's still waiting on the user: selectOrg sets the
@@ -244,14 +246,14 @@ export const workspaceSettledAtom = atom(get => {
 //
 // Stamped with the customer it belongs to because one browser outlives one account: under an org key
 // alone, two accounts sharing an org share one entry, so the second lands on the first's project and
-// then overwrites it. One slot rather than a slice per account — one customer per browser is the
+// then overwrites it. One slot rather than a slice per account: one customer per browser is the
 // assumption, so a second account's visits are forgotten rather than kept forever in a roster
 // nothing trims. The stamp retires the earlier unstamped shapes for free: they carry no customerId,
 // so they can't match one and read as no visits, and the first write replaces them outright.
 //
 // getOnInit because the restore loses a race without it: atomWithStorage otherwise starts at the
 // initial value and only reads storage in onMount, so an early reader sees {} and defaults to the
-// first project — and once that default lands it *is* a valid pick, so the stored one never gets
+// first project, and once that default lands it *is* a valid pick, so the stored one never gets
 // another chance. (lastOrgIdAtom above buys the same guarantee by hand, predating this option.)
 // Not sufficient on its own: the customer id has to land synchronously too, which is why jwtAtom
 // pre-reads localStorage at module scope rather than deferring to onMount (see jwt.atoms).
@@ -290,7 +292,7 @@ export const createProjectAtom = atom(null, async (get, set, displayName: string
   // Inherit the creator's browser zone (coerced to UTC server-side if malformed);
   // adjust per-project later in settings.
   const resp = await projectsRPC.create({ displayName, orgId: org.id, reportingTimezone: browserTimezone() })
-  // Refresh the project list — if this fails, the project was still created server-side
+  // Refresh the project list. If this fails, the project was still created server-side
   const refreshed = await projectsRPC.batchGet({ orgId: org.id }).catch(err => {
     console.error('Project created but list refresh failed:', err)
     return null
@@ -378,6 +380,41 @@ export const projectHeaderAtom = atom(get => {
   const project = get(activeProjectAtom)
   if (!project) return undefined
   return { 'x-project-id': project.id }
+})
+
+// Checked here first: the transport's own proto check throws Code.Unknown, which rpcErrorMessage swaps
+// for the caller's wording, and a reference's rules are the whole reason a save is refused.
+const requestValidator = createValidator()
+
+// Sets the active project's default theme ('' clears it) and puts the stored project back. Only
+// default_theme is sent: UpdateMeta is a partial update. A refusal is rethrown and changes nothing.
+export const saveProjectThemeAtom = atom(null, async (get, set, reference: string) => {
+  const project = get(activeProjectAtom)
+  const headers = get(projectHeaderAtom)
+  if (!project || !headers) return
+  const checked = requestValidator.validate(
+    UpdateMetaRequestSchema,
+    create(UpdateMetaRequestSchema, { defaultTheme: reference }),
+  )
+  if (checked.kind === 'invalid') {
+    const reason = checked.violations.map(v => v.message).join('; ')
+    throw new ConnectError(`${reason.charAt(0).toUpperCase()}${reason.slice(1)}.`, Code.InvalidArgument)
+  }
+  const resp = await get(projectsRPCAtom).updateMeta({ defaultTheme: reference }, { headers })
+  // A server that predates default_theme drops the field and answers with the project unchanged.
+  if (resp.project && resp.project.defaultTheme !== reference) {
+    throw new ConnectError('This server can’t store a default theme yet.', Code.FailedPrecondition)
+  }
+  const saved = resp.project ?? { ...project, defaultTheme: reference }
+  if (get(activeProjectAtom)?.id === saved.id) set(activeProjectAtom, saved)
+  set(
+    projectsAtom,
+    get(projectsAtom).map(p => (p.id === saved.id ? saved : p)),
+  )
+  let kind = 'builtin'
+  if (reference === '') kind = 'cleared'
+  else if (isUrlTarget(reference)) kind = 'url'
+  trackEvent('project_theme_set', { kind, pinned: reference.includes('#') })
 })
 
 // The project's reporting timezone, used to render bucketed insight/dashboard

@@ -1,7 +1,7 @@
 import { describe, expect, it, vi } from 'vitest'
 import { formatColor, parseColor } from '../lib/color/parse'
 import { buildLibrary, type InstalledTheme } from './library'
-import { buildPaintCache, PAINT_CACHE_KEY, writePaintCache } from './paint-cache'
+import { buildPaintCache, MAX_PAINTED_PROJECTS, PAINT_CACHE_KEY, readPaintCache, writePaintCache } from './paint-cache'
 
 const grape: InstalledTheme = {
   id: 'installed-grape',
@@ -10,33 +10,104 @@ const grape: InstalledTheme = {
   installedAt: 0,
   source: 'file',
 }
+const library = buildLibrary([grape])
+const own = { light: 'pug', dark: 'pug' }
+const personal = { selection: own, source: 'personal' as const }
+const colourblind = { selection: { light: 'pug-colourblind', dark: 'pug-colourblind' }, source: 'project' as const }
 
 describe('buildPaintCache', () => {
   it('names built-ins and carries an installed theme as variables', () => {
     const cache = buildPaintCache({
-      selection: { light: 'pug', dark: grape.id },
+      previous: null,
+      projectId: null,
+      choice: personal,
+      personal: { light: 'pug', dark: grape.id },
       autoContrast: true,
-      library: buildLibrary([grape]),
+      library,
     })
-    expect(cache.v).toBe(1)
-    expect(cache.autoContrast).toBe(true)
-    expect(cache.light).toEqual({ builtin: 'pug', standard: true })
-    expect('vars' in cache.dark && cache.dark.vars['--background']).toBe(formatColor(parseColor('#1e1b2e') as never))
-    expect(cache.dark.standard).toBe(true)
+    expect(cache).toMatchObject({ v: 2, autoContrast: true, projects: {} })
+    expect(cache.personal.light).toEqual({ builtin: 'pug', standard: true })
+    const dark = cache.personal.dark
+    expect('vars' in dark && dark.vars['--background']).toBe(formatColor(parseColor('#1e1b2e') as never))
   })
 
-  it('falls back to Pug for a mode the selected family lacks', () => {
+  it('paints the project’s choice with its pin, and remembers it as last', () => {
     const cache = buildPaintCache({
-      selection: { light: grape.id, dark: 'pug' },
+      previous: null,
+      projectId: 'p1',
+      choice: { selection: { light: 'pug-colourblind', dark: 'pug-colourblind' }, pin: 'dark', source: 'project' },
+      personal: own,
       autoContrast: false,
-      library: buildLibrary([grape]),
+      library,
     })
-    expect(cache.light).toEqual({ builtin: 'pug', standard: true })
+    expect(cache.last).toBe('p1')
+    expect(cache.projects.p1).toMatchObject({ pin: 'dark', dark: { builtin: 'pug-colourblind', standard: true } })
+  })
+
+  // The script paints the member's own for a project with no entry, which stays right when they change it
+  // from another project. An entry would freeze the old one, and the next load there would flash.
+  it('keeps no entry for a project on the member’s own theme, nor names it last', () => {
+    const before = buildPaintCache({
+      previous: null,
+      projectId: 'p1',
+      choice: colourblind,
+      personal: own,
+      autoContrast: true,
+      library,
+    })
+    const cache = buildPaintCache({
+      previous: before,
+      projectId: 'p1',
+      choice: personal,
+      personal: own,
+      autoContrast: true,
+      library,
+    })
+    expect(cache.projects).toEqual({})
+    expect(cache.last).toBeUndefined()
+  })
+
+  it('keeps other projects, most recent last, up to the limit', () => {
+    let cache: ReturnType<typeof buildPaintCache> | null = null
+    for (let i = 0; i <= MAX_PAINTED_PROJECTS; i++) {
+      cache = buildPaintCache({
+        previous: cache,
+        projectId: `p${i}`,
+        choice: colourblind,
+        personal: own,
+        autoContrast: true,
+        library,
+      })
+    }
+    const ids = Object.keys(cache?.projects ?? {})
+    expect(ids).toHaveLength(MAX_PAINTED_PROJECTS)
+    expect(ids).not.toContain('p0')
+    expect(ids.at(-1)).toBe(`p${MAX_PAINTED_PROJECTS}`)
+  })
+})
+
+describe('readPaintCache', () => {
+  it('carries a version 2 cache’s project paints forward', () => {
+    const p1 = { light: { builtin: 'pug', standard: true }, dark: { builtin: 'pug', standard: true } }
+    localStorage.setItem(
+      PAINT_CACHE_KEY,
+      JSON.stringify({ v: 2, autoContrast: true, last: 'p1', personal: p1, projects: { p1 } }),
+    )
+    expect(readPaintCache()).toEqual({ projects: { p1 }, last: 'p1' })
+  })
+
+  it('reads nothing from a cache that isn’t one', () => {
+    localStorage.setItem(PAINT_CACHE_KEY, '{')
+    expect(readPaintCache()).toBeNull()
+    localStorage.setItem(PAINT_CACHE_KEY, JSON.stringify({ v: 3 }))
+    expect(readPaintCache()).toBeNull()
+    localStorage.setItem(PAINT_CACHE_KEY, JSON.stringify({ v: 2, projects: [] }))
+    expect(readPaintCache()).toBeNull()
   })
 })
 
 describe('writePaintCache', () => {
-  // A refused write leaves the old cache in place, and the next load would paint whatever it says —
+  // A refused write leaves the old cache in place, and the next load would paint whatever it says,
   // possibly a theme that has since been removed. With no cache it paints Pug, then React corrects.
   it('drops the old cache when storage refuses the new one', () => {
     localStorage.setItem(
@@ -48,7 +119,14 @@ describe('writePaintCache', () => {
     })
     try {
       writePaintCache(
-        buildPaintCache({ selection: { light: 'pug', dark: 'pug' }, autoContrast: true, library: buildLibrary([]) }),
+        buildPaintCache({
+          previous: null,
+          projectId: null,
+          choice: personal,
+          personal: own,
+          autoContrast: true,
+          library,
+        }),
       )
     } finally {
       refusal.mockRestore()

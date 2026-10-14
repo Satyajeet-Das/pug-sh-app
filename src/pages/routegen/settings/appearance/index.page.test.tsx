@@ -1,6 +1,9 @@
+import { create } from '@bufbuild/protobuf'
 import { act, fireEvent, render, screen, within } from '@testing-library/react'
 import { createStore, Provider } from 'jotai'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
+import { ProjectSchema } from '@/api/genproto/dashboard/projects/v1/projects_pb'
+import { fakeResponse } from '@/test/fake-response'
 
 vi.mock('@/analytics/pug', () => ({
   trackEvent: vi.fn(),
@@ -14,7 +17,16 @@ vi.mock('sonner', () => ({ toast: { success: vi.fn(), error: vi.fn() } }))
 
 const { trackEvent } = await import('@/analytics/pug')
 const { toast } = await import('sonner')
-const { installedThemesAtom, STORAGE_REFUSED, themeModeAtom, themeSelectionAtom } = await import('@/data/theme.atoms')
+const {
+  installedThemesAtom,
+  projectOverridesAtom,
+  refreshFetchedThemeAtom,
+  STORAGE_REFUSED,
+  setProjectOverrideAtom,
+  themeModeAtom,
+  themeSelectionAtom,
+} = await import('@/data/theme.atoms')
+const { activeProjectAtom } = await import('@/data/workspace.atoms')
 const Appearance = (await import('./index.page')).default
 
 const grape = JSON.stringify({ version: 1, name: 'Grape', variants: { dark: { colors: { background: '#1e1b2e' } } } })
@@ -46,7 +58,7 @@ describe('Settings → Appearance', () => {
     expect(store.get(themeModeAtom)).toBe('dark')
   })
 
-  // Swatches are real buttons, named by their theme, carrying their state — and each
+  // Swatches are real buttons, named by their theme, carrying their state, and each
   // row is a labelled group, or a screen reader hears "Pug, pressed" twice with nothing to say which
   // mode either one sets.
   it('offers each built-in as a pressable button inside a labelled group per mode', () => {
@@ -58,7 +70,7 @@ describe('Settings → Appearance', () => {
     }
   })
 
-  // A pressed swatch used to differ from the rest by one pixel of border colour — the one cue the
+  // A pressed swatch used to differ from the rest by one pixel of border colour, the one cue the
   // colourblind and high-contrast themes' own users are least able to see. It carries a mark too.
   it('marks the selected swatch with more than colour', () => {
     mount()
@@ -77,7 +89,7 @@ describe('Settings → Appearance', () => {
     fireEvent.click(screen.getByRole('button', { name: 'Grape' }))
     const id = store.get(installedThemesAtom)[0].id
     expect(store.get(themeSelectionAtom)).toEqual({ light: 'pug', dark: id })
-    expect(trackEvent).toHaveBeenCalledWith('theme_selected', { theme: 'custom', mode: 'dark' })
+    expect(trackEvent).toHaveBeenCalledWith('theme_selected', { theme: 'custom', mode: 'dark', scope: 'personal' })
   })
 
   it('refuses a file that is not a theme', async () => {
@@ -103,7 +115,7 @@ describe('Settings → Appearance', () => {
   })
 
   // Reads finish in any order. A slow file landing after a newer pick used to install itself over that
-  // pick's report — the person is left looking at a theme they moved on from.
+  // pick's report, and the person is left looking at a theme they moved on from.
   it('lets only the latest pick land when an earlier read finishes last', async () => {
     const store = mount()
     let release = () => {}
@@ -186,7 +198,7 @@ describe('Settings → Appearance', () => {
   })
 
   // An ignored key is not a contrast problem. A file whose only issue is a typo'd key used to be
-  // offered with "some colours may be hard to read" — and installed as a copy of Pug.
+  // offered with "some colours may be hard to read" and installed as a copy of Pug.
   it('tells ignored keys apart from colours that may be hard to read', async () => {
     mount()
     pick(JSON.stringify({ version: 1, name: 'Typo', variants: { dark: { colours: { background: '#1e1b2e' } } } }))
@@ -204,5 +216,112 @@ describe('Settings → Appearance', () => {
     fireEvent.click(toggle)
     expect(toggle.getAttribute('aria-expanded')).toBe('true')
     expect(within(screen.getByRole('table')).getByText(/foreground on background is/)).toBeTruthy()
+  })
+})
+
+describe('This project', () => {
+  const inProject = (defaultTheme: string) => {
+    const store = createStore()
+    store.set(activeProjectAtom, create(ProjectSchema, { id: 'p1', displayName: 'Acme', defaultTheme }))
+    render(
+      <Provider store={store}>
+        <Appearance />
+      </Provider>,
+    )
+    return store
+  }
+  const pickSwatch = (name: string) =>
+    fireEvent.click(within(screen.getByRole('group', { name: 'Themes' })).getByRole('button', { name }))
+
+  afterEach(() => vi.unstubAllGlobals())
+
+  it('shows the project’s default, and overrides it in this browser', () => {
+    const store = inProject('pug-colourblind#dark')
+    expect(screen.getByText('Project default: Pug Colourblind-safe, always dark')).toBeTruthy()
+    pickSwatch('Pug High Contrast')
+    fireEvent.click(screen.getByRole('button', { name: 'Use in this project' }))
+    expect(store.get(projectOverridesAtom)).toEqual({ p1: 'pug-high-contrast' })
+    expect(screen.getByText('Using Pug High Contrast in this project.')).toBeTruthy()
+    expect(trackEvent).toHaveBeenCalledWith('theme_selected', {
+      theme: 'pug-high-contrast',
+      mode: 'both',
+      scope: 'project',
+    })
+    fireEvent.click(screen.getByRole('button', { name: 'Back to project default' }))
+    expect(store.get(projectOverridesAtom)).toEqual({})
+  })
+
+  it('says when the project’s theme couldn’t load', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => fakeResponse('', { status: 404 })),
+    )
+    const url = 'https://themes.pug.sh/gone/theme.json'
+    const store = inProject(url)
+    await act(() => store.set(refreshFetchedThemeAtom, url))
+    expect(screen.getByText('Couldn’t load this project’s theme. Showing your theme instead.')).toBeTruthy()
+  })
+
+  it('notes a pinned mode under Mode', () => {
+    inProject('pug#dark')
+    expect(screen.getByText('This project is always dark.')).toBeTruthy()
+  })
+
+  it('says so when storage refuses the override', () => {
+    const store = inProject('')
+    pickSwatch('Pug High Contrast')
+    const refusal = vi.spyOn(localStorage, 'setItem').mockImplementation(() => {
+      throw new DOMException('full', 'QuotaExceededError')
+    })
+    try {
+      fireEvent.click(screen.getByRole('button', { name: 'Use in this project' }))
+    } finally {
+      refusal.mockRestore()
+    }
+    expect(toast.error).toHaveBeenCalledWith(STORAGE_REFUSED)
+    expect(store.get(projectOverridesAtom)).toEqual({})
+  })
+
+  // A reference from a newer build, or an id set through the API: nothing will load it, so no "Loading".
+  it.each(['pug#dim', 'pug-colorblind'])('says a default it can’t use, %j, couldn’t load', defaultTheme => {
+    inProject(defaultTheme)
+    expect(screen.getByText('Couldn’t load this project’s theme. Showing your theme instead.')).toBeTruthy()
+  })
+
+  it('says why the member’s own file for the project isn’t showing', async () => {
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => fakeResponse('', { status: 404 })),
+    )
+    const url = 'https://themes.pug.sh/mine/theme.json'
+    const store = inProject('')
+    act(() => {
+      store.set(setProjectOverrideAtom, { projectId: 'p1', reference: url })
+    })
+    await act(() => store.set(refreshFetchedThemeAtom, url))
+    expect(screen.getByText('Last check failed: the host answered 404.')).toBeTruthy()
+  })
+
+  // Linen has no dark variant, so its pin is ignored and the mode is the member's.
+  it('describes the mode in effect, not a pin that was ignored', async () => {
+    const linen = JSON.stringify({
+      version: 1,
+      name: 'Linen',
+      variants: { light: { colors: { background: '#f3eee4' } } },
+    })
+    vi.stubGlobal(
+      'fetch',
+      vi.fn(async () => fakeResponse(linen)),
+    )
+    const url = 'https://themes.pug.sh/linen/theme.json'
+    const store = inProject(`${url}#dark`)
+    await act(() => store.set(refreshFetchedThemeAtom, url))
+    expect(screen.getByText('Project default: Linen, follows each member’s mode')).toBeTruthy()
+  })
+
+  it('keeps the member’s own rows under Your theme', () => {
+    inProject('')
+    expect(screen.getByText('Used in projects without a default')).toBeTruthy()
+    expect(screen.getByRole('group', { name: 'Light theme' })).toBeTruthy()
   })
 })

@@ -14,12 +14,12 @@ import {
 } from './tokens'
 
 // Theme format v1: parsing a theme file (text or object) into a ThemeFamily plus a list of issues.
-// Errors refuse the theme; warnings let it load. Unknown keys are dropped with a warning — the rule
-// CSS uses for unknown properties — so a theme using keys a newer Pug added still loads here. A newer
+// Errors refuse the theme; warnings let it load. Unknown keys are dropped with a warning (the rule
+// CSS uses for unknown properties), so a theme using keys a newer Pug added still loads here. A newer
 // version number is refused outright.
 
 // Every format version this build reads. Bumping CURRENT_VERSION means adding it here, and then
-// MIGRATIONS has to carry an upgrade from each older version — the compiler holds it to that.
+// MIGRATIONS has to carry an upgrade from each older version; the compiler holds it to that.
 type Version = 1
 const CURRENT_VERSION = 1 satisfies Version
 export const MAX_THEME_BYTES = 64 * 1024
@@ -48,7 +48,7 @@ export type ThemeFamily = {
   variants: Partial<Record<Polarity, Variant>>
 }
 
-/** The file shape as authored — what presets are written in and what parseThemeObject reads. */
+/** The file shape as authored: what presets are written in and what parseThemeObject reads. */
 type VariantFile = {
   colors?: Partial<Record<TokenName, string>>
   data?: {
@@ -73,8 +73,8 @@ export type ThemeFile = {
 
 export type ParseResult = { ok: true; family: ThemeFamily; issues: Issue[] } | { ok: false; issues: Issue[] }
 
-// The file's structure, written once and built twice: loose for the parser — unknown keys pass through
-// to a warning, and colours are checked against the grammar afterwards so each failure gets a path —
+// The file's structure, written once and built twice: loose for the parser (unknown keys pass through
+// to a warning, and colours are checked against the grammar afterwards so each failure gets a path)
 // and strict for editors, with every token and group listed so names autocomplete.
 const dataFields = <G extends z.ZodType>(color: z.ZodString, groups: G) => ({
   categorical: z.array(color).min(3).max(24).optional(),
@@ -120,7 +120,7 @@ export const authoringSchema = (() => {
 type Migration = (input: Record<string, unknown>) => Record<string, unknown>
 const MIGRATIONS: { [V in Exclude<Version, typeof CURRENT_VERSION>]: Migration } = {}
 
-// C0/C1 controls and bidi overrides — a theme name must not be able to reorder the text around it.
+// C0/C1 controls and bidi overrides: a theme name must not be able to reorder the text around it.
 const UNSAFE_TEXT = /[\u0000-\u001f\u007f-\u009f\u202a-\u202e\u2066-\u2069]/g
 
 // The keys each level knows, read off the shapes above so a new field can't be warned about as unknown.
@@ -147,7 +147,7 @@ const distance = (a: string, b: string) => {
 
 const suggest = (name: string, options: readonly string[]) => {
   const best = options.map(o => [o, distance(name, o)] as const).sort((x, y) => x[1] - y[1])[0]
-  return best && best[1] <= 2 ? ` — did you mean "${best[0]}"?` : ''
+  return best && best[1] <= 2 ? ` (did you mean "${best[0]}"?)` : ''
 }
 
 export const parseThemeText = (text: string): ParseResult => {
@@ -198,7 +198,12 @@ export const parseThemeObject = (input: unknown): ParseResult => {
   const variants: Partial<Record<Polarity, Variant>> = {}
   for (const polarity of POLARITIES) {
     const source = file.variants[polarity]
-    if (source) variants[polarity] = parseVariant(source, `variants.${polarity}`, issues)
+    if (!source) continue
+    variants[polarity] = parseVariant(source, `variants.${polarity}`, issues)
+    if (hasProtoEventKey(raw, polarity)) {
+      const at = `variants.${polarity}.data.events.__proto__`
+      issues.push(warning('V12', at, '"__proto__" can’t name an event, so it was ignored'))
+    }
   }
   // Ahead of the gate, so a file whose variants and name are both broken hears about both at once.
   const name = cleanText(file.name, 'name', issues).trim()
@@ -215,12 +220,23 @@ export const parseThemeObject = (input: unknown): ParseResult => {
   return { ok: true, family, issues }
 }
 
+// zod drops a "__proto__" record key, so it never reaches the parsed file to be warned about. JSON.parse
+// made it an ordinary own key, so look for it on the raw input.
+const hasProtoEventKey = (raw: Record<string, unknown>, polarity: Polarity) => {
+  let at: unknown = raw
+  for (const key of ['variants', polarity, 'data', 'events']) {
+    if (typeof at !== 'object' || at === null || !Object.hasOwn(at, key)) return false
+    at = (at as Record<string, unknown>)[key]
+  }
+  return typeof at === 'object' && at !== null && Object.hasOwn(at, '__proto__')
+}
+
 const parseVariant = (source: z.infer<typeof variantShape>, path: string, issues: Issue[]): Variant => {
   unknownKeys(source, KNOWN.variant, path, issues)
   const colors = namedColors(source.colors ?? {}, TOKENS, 'token', `${path}.colors`, issues, (value, at, token) => {
     const parsed = colorAt(value, at, issues)
     if (parsed && parsed.alpha < 0.999 && SURFACES.has(token)) {
-      issues.push(error('V5', at, `${token} must be opaque — text is drawn on it`))
+      issues.push(error('V5', at, `${token} must be opaque, since text is drawn on it`))
     }
     return parsed
   })
@@ -243,15 +259,26 @@ const parseVariant = (source: z.infer<typeof variantShape>, path: string, issues
   if (eventKeys.length > MAX_EVENTS) {
     issues.push(error('V13', `${path}.data.events`, `At most ${MAX_EVENTS} event colours`))
   }
+  // The file key that claimed each event, so a second key for the same event can say which one won.
+  const claimedBy = new Map<string, string>()
   for (const key of eventKeys.slice(0, MAX_EVENTS)) {
+    const at = `${path}.data.events.${key}`
+    const parsed = dataColorAt(rawEvents[key], at, issues)
     const kind = resolveKind(key)
-    const parsed = dataColorAt(rawEvents[key], `${path}.data.events.${key}`, issues)
-    if (parsed && kind) data.events[kind] = parsed
+    const first = claimedBy.get(kind)
+    if (!kind) {
+      issues.push(warning('V12', at, `"${key}" names no event, so it was ignored`))
+    } else if (first !== undefined) {
+      issues.push(warning('V12', at, `"${key}" is the same event as "${first}", so it was ignored`))
+    } else {
+      claimedBy.set(kind, key)
+      if (parsed) data.events[kind] = parsed
+    }
   }
   return { colors, data }
 }
 
-// Colours keyed by a registry name — tokens or groups. An unknown name gets a warning; known ones are
+// Colours keyed by a registry name: tokens or groups. An unknown name gets a warning; known ones are
 // read through the registry, never by copying the file's keys, so __proto__ and friends stay inert.
 const namedColors = <N extends string>(
   raw: Record<string, string>,
@@ -281,7 +308,7 @@ const colorAt = (value: unknown, path: string, issues: Issue[]) => {
   return parsed
 }
 
-// Data colours are drawn solid — series lines, dots, discs — so alpha on one is dropped. Say so.
+// Data colours are drawn solid (series lines, dots, discs), so alpha on one is dropped. Say so.
 const dataColorAt = (value: unknown, path: string, issues: Issue[]) => {
   const parsed = colorAt(value, path, issues)
   if (parsed && parsed.alpha < 0.999)
@@ -302,7 +329,7 @@ const unknownKeys = (obj: object, known: string[], path: string, issues: Issue[]
 }
 
 /**
- * A theme's name read straight from its text, cleaned like any name — for a theme that no longer
+ * A theme's name read straight from its text, cleaned like any name, for a theme that no longer
  * parses, so it can still be named. Null when there's no usable name in it.
  */
 export const readableName = (text: string) => {
@@ -321,14 +348,14 @@ const cleanText = (value: string, path: string, issues: Issue[]) => {
   return cleaned
 }
 
-// Whether a name — already cleaned and trimmed — has anything that draws: a letter, number, punctuation
+// Whether a name (already cleaned and trimmed) has anything that draws: a letter, number, punctuation
 // mark or symbol. The installed list, the swatch's accessible name and the install toast show the name
 // and nothing else, so one of only zero-width, combining or private-use characters is refused like an
-// empty one. Unicode has no "draws nothing" property, so this is a line rather than a proof — a blank
+// empty one. Unicode has no "draws nothing" property, so this is a line rather than a proof: a blank
 // letter (U+3164) or symbol (U+2800) still passes.
 const hasVisibleText = (name: string) => /[\p{L}\p{N}\p{P}\p{S}]/u.test(name)
 
-// An issue repeats the file's own keys and values, and the install report renders it — so it gets the
+// An issue repeats the file's own keys and values, and the install report renders it, so it gets the
 // same cleaning as a name.
 const issue = (severity: Issue['severity'], rule: RuleId, path: string, message: string): Issue => ({
   severity,
@@ -339,5 +366,5 @@ const issue = (severity: Issue['severity'], rule: RuleId, path: string, message:
 export const error = (rule: RuleId, path: string, message: string) => issue('error', rule, path, message)
 export const warning = (rule: RuleId, path: string, message: string) => issue('warning', rule, path, message)
 
-/** The refusal for a file over MAX_THEME_BYTES — raised before parsing, and by the UI before reading. */
+/** The refusal for a file over MAX_THEME_BYTES, raised before parsing, and by the UI before reading. */
 export const tooLargeIssue = () => error('V13', '', `Theme files are limited to ${MAX_THEME_BYTES / 1024} KB`)

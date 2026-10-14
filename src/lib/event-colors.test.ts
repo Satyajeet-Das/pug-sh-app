@@ -24,6 +24,11 @@ describe.each(['light', 'dark'] as const)('series colours on Pug %s', polarity =
   })
 })
 
+it('colours an event named after an Object.prototype key like any other', () => {
+  setSeriesPalette(compileDataPalette(undefined, 'light', 'standard', PUG_CANVAS.light))
+  expect(typeof getSeriesColor('constructor').dot).toBe('string')
+})
+
 it('fades a reference series with alpha', () => {
   expect(fadedSeriesColor({ line: '#2563eb', fill: '#2563eb1a', dot: '#2563eb' })).toEqual({
     line: '#2563eb99',

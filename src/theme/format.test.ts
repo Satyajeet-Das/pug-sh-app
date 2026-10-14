@@ -1,5 +1,6 @@
 import { describe, expect, it } from 'vitest'
 import { z } from 'zod'
+import { parseColor } from '../lib/color/parse'
 import { authoringSchema, MAX_THEME_BYTES, parseThemeObject, parseThemeText } from './format'
 
 const minimal = { version: 1, name: 'Grape', variants: { dark: { colors: { background: '#1e1b2e' } } } }
@@ -29,7 +30,7 @@ describe('parseThemeObject', () => {
     expect(messages.some(m => m.includes('font-sans'))).toBe(true)
   })
 
-  it('never copies an unknown key onto anything — __proto__ is just another unknown token', () => {
+  it('never copies an unknown key onto anything: __proto__ is just another unknown token', () => {
     const result = parseThemeText(
       '{"version":1,"name":"x","variants":{"light":{"colors":{"__proto__":"#fff","background":"#fff"}}}}',
     )
@@ -50,7 +51,7 @@ describe('parseThemeObject', () => {
   })
 
   // Contrast is measured against a surface as if it were solid, and other surfaces are derived from
-  // its lightness — a see-through one passes every check and renders unreadable.
+  // its lightness, so a see-through one passes every check and renders unreadable.
   it('refuses a see-through surface or fill, naming where it is', () => {
     const result = parseThemeObject({
       ...minimal,
@@ -95,7 +96,7 @@ describe('parseThemeObject', () => {
     expect(result.issues.filter(i => i.rule === 'V12')).toHaveLength(2)
   })
 
-  // The shape asks the raw name for one character, but cleaning runs after it — and a zero-width space
+  // The shape asks the raw name for one character, but cleaning runs after it, and a zero-width space
   // survives cleaning and trimming both. Each of these installed blank: an unlabelled row, a nameless
   // swatch, "Installed " in a toast.
   it.each([
@@ -117,7 +118,7 @@ describe('parseThemeObject', () => {
   })
 
   // A theme's keys and values come back inside its own issue messages, which the install report
-  // renders — so the cleaning that keeps a direction override out of a name keeps it out of those too.
+  // renders, so the cleaning that keeps a direction override out of a name keeps it out of those too.
   it('keeps control and direction-override characters out of its own messages', () => {
     const result = parseThemeObject({ ...minimal, 'x\u202eevil': 1 })
     expect(result.issues).toHaveLength(1)
@@ -148,6 +149,28 @@ describe('parseThemeObject', () => {
     expect(result.ok).toBe(true)
     if (!result.ok) return
     expect(Object.keys(result.family.variants.dark?.data.events ?? {})).toEqual(['page_view'])
+  })
+
+  // Three ways an event key used to vanish without the warning every other ignored key gets. Text, not an
+  // object literal: only JSON.parse makes "__proto__" an ordinary key.
+  it('warns about event keys it ignores', () => {
+    const result = parseThemeText(
+      '{"version":1,"name":"Grape","variants":{"dark":{"data":{"events":' +
+        '{"__proto__":"#ff0000","---":"#00ff00","page_view":"#111111","pageView":"#222222","constructor":"#333333"}}}}}',
+    )
+    expect(result.ok).toBe(true)
+    if (!result.ok) return
+    const messages = result.issues.map(i => `${i.rule} ${i.path}: ${i.message}`)
+    expect(messages).toContain(
+      'V12 variants.dark.data.events.__proto__: "__proto__" can’t name an event, so it was ignored',
+    )
+    expect(messages).toContain('V12 variants.dark.data.events.---: "---" names no event, so it was ignored')
+    expect(messages).toContain(
+      'V12 variants.dark.data.events.pageView: "pageView" is the same event as "page_view", so it was ignored',
+    )
+    const events = result.family.variants.dark?.data.events ?? {}
+    expect(Object.keys(events).sort()).toEqual(['constructor', 'page_view'])
+    expect(events.page_view).toEqual(parseColor('#111111'))
   })
 })
 

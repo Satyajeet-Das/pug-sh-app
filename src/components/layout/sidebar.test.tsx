@@ -1,5 +1,5 @@
 import { create } from '@bufbuild/protobuf'
-import { fireEvent, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { createStore, Provider } from 'jotai'
 import { beforeEach, describe, expect, it, vi } from 'vitest'
 import { Router } from 'wouter'
@@ -39,6 +39,7 @@ const { SidebarProvider, SidebarTrigger } = await import('@/components/ui/sideba
 const AppSidebar = (await import('@/components/layout/sidebar')).default
 const { activeOrgAtom, activeProjectAtom, projectsAtom } = await import('@/data/workspace.atoms')
 const { jwtAtom, refreshTokenAtom } = await import('@/auth/jwt.atoms')
+const { themeModeAtom } = await import('@/data/theme.atoms')
 
 // Admin so the Can gate renders the create-project affordance at all.
 const orgA = create(OrgSchema, { id: 'org-a', displayName: 'Org A', role: OrgRole.ADMIN })
@@ -74,7 +75,7 @@ const mount = async (path: string) => {
   // Only the mobile branch renders a sheet. Without this the dismissal assertions below would pass
   // against a desktop column that was never a sheet, which is what a stale innerWidth would leave.
   expect(document.querySelector('[data-mobile="true"]')).not.toBeNull()
-  return { history, nav }
+  return { history, nav, store }
 }
 
 describe('the sidebar on mobile', () => {
@@ -136,5 +137,16 @@ describe('the sidebar on mobile', () => {
     fireEvent.click(screen.getByRole('button', { name: /light|dark|system/i }))
 
     expect(document.body.contains(nav)).toBe(true)
+  })
+
+  it('shows a pinned project’s mode and leaves the member’s setting alone', async () => {
+    const { store } = await mount('/p/p1/overview')
+    act(() => {
+      store.set(activeProjectAtom, create(ProjectSchema, { id: 'p1', displayName: 'First', defaultTheme: 'pug#dark' }))
+    })
+    const button = screen.getByRole('button', { name: 'Always dark' })
+    expect(button.getAttribute('aria-disabled')).toBe('true')
+    fireEvent.click(button)
+    expect(store.get(themeModeAtom)).toBe('system')
   })
 })

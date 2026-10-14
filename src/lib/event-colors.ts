@@ -12,7 +12,7 @@ export type { SeriesColor } from '@/theme/data-palette'
 
 const pugPalettes: Partial<Record<Polarity, CompiledDataPalette>> = {}
 
-/** Pug's own data palette, whatever theme is active — for surfaces that stay Pug, like the sign-in pages. */
+/** Pug's own data palette, whatever theme is active, for surfaces that stay Pug, like the sign-in pages. */
 export const pugDataPalette = (polarity: Polarity) =>
   (pugPalettes[polarity] ??= compileDataPalette(undefined, polarity, 'standard', PUG_CANVAS[polarity]))
 
@@ -24,7 +24,7 @@ export const setSeriesPalette = (next: CompiledDataPalette) => {
   palette = next
 }
 
-// Deterministic 32-bit string hash — depends only on the name, so the chosen color is identical for
+// Deterministic 32-bit string hash: depends only on the name, so the chosen color is identical for
 // every user, session, and view.
 const hashString = (s: string): number => {
   let h = 0
@@ -46,10 +46,9 @@ export const seriesColorIn = (source: CompiledDataPalette, seriesName: string, f
   const canonical = resolveKind(seriesName)
   if (!canonical) return indexedColorIn(source, fallbackIndex)
 
-  const mapped = source.events[canonical]
-  if (mapped) return mapped
+  if (Object.hasOwn(source.events, canonical)) return source.events[canonical]
 
-  // Unmapped (custom) event — deterministic by name, identical for every user and view. Borrow the
+  // Unmapped (custom) event: deterministic by name, identical for every user and view. Borrow the
   // matching family's hue; otherwise hash into the categorical palette.
   const family = source.families.find(f => f.prefixes.some(p => canonical.startsWith(p)))
   if (family) return family.palette[hashString(canonical) % family.palette.length]
