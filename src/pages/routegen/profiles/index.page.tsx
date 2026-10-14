@@ -5,7 +5,7 @@ import { toast } from 'sonner'
 import { trackFeature } from '@/analytics/pug'
 import type { GetFilterSchemaResponse } from '@/api/genproto/common/v1/filter_schema_pb'
 import { LogicalOperator } from '@/api/genproto/common/v1/filters_pb'
-import type { Profile } from '@/api/genproto/shared/profiles/v1/profiles_pb'
+import { type Profile, ProfileListSort } from '@/api/genproto/shared/profiles/v1/profiles_pb'
 import { insightsRPCAtom, profilesRPCAtom } from '@/api/rpc'
 import { LocationLabel } from '@/components/country-flag'
 import { DetailTooltip, tooltipPanelContent } from '@/components/detail-tooltip'
@@ -20,7 +20,12 @@ import { PlatformStackLabel } from '@/components/platform-label'
 import ProjectLink from '@/components/project-link'
 import { Button } from '@/components/ui/button'
 import { activeProjectAtom, projectHeaderAtom } from '@/data/workspace.atoms'
-import { readFilterQueryParams, writeFilterQueryParams } from '@/hooks/use-filter-query-params'
+import {
+  readFilterQueryParams,
+  replaceUrlIfChanged,
+  setOrDelete,
+  writeFilterQueryParams,
+} from '@/hooks/use-filter-query-params'
 import { useFilterState } from '@/hooks/use-filter-state'
 import { useIncludeBots } from '@/hooks/use-include-bots'
 import { formatRelative, useRelativeTime } from '@/hooks/use-relative-time'
@@ -73,6 +78,58 @@ const ActivitySummary = ({ activity }: { activity: Profile['activity'] }) => {
   )
 }
 
+// The server sorts: the list is paged on its sort key, so ordering the loaded rows here would only
+// reorder one page. A button, not a clickable <th>, so the sort is reachable from the keyboard.
+const SortHeader = ({
+  label,
+  active,
+  onSelect,
+  className,
+}: {
+  label: string
+  active: boolean
+  onSelect: () => void
+  className: string
+}) => (
+  <th
+    aria-sort={active ? 'descending' : undefined}
+    className={cn('py-2 text-left font-medium whitespace-nowrap', className)}
+  >
+    {/* uppercase again: the UA stylesheet resets text-transform on buttons, and preflight doesn't undo it. */}
+    <button
+      type="button"
+      onClick={onSelect}
+      className={cn('uppercase cursor-pointer hover:text-foreground', active && 'text-foreground')}
+    >
+      {label}
+      {/* aria-sort already announces the direction; in the name the arrow is only noise. */}
+      {active && (
+        <span aria-hidden="true" className="ml-1">
+          ↓
+        </span>
+      )}
+    </button>
+  </th>
+)
+
+// Only a non-default sort is written, like the bots toggle's param, so a default-view link never
+// accumulates one. Read once on mount: the URL is how a sort survives opening a profile and coming Back.
+const SORT_PARAM = 'sort'
+const FIRST_SEEN_PARAM_VALUE = 'first_seen'
+
+const readSortParam = () => {
+  if (new URLSearchParams(window.location.search).get(SORT_PARAM) === FIRST_SEEN_PARAM_VALUE) {
+    return ProfileListSort.FIRST_SEEN
+  }
+  return ProfileListSort.LAST_SEEN
+}
+
+const writeSortParam = (sort: ProfileListSort) => {
+  const url = new URL(window.location.href)
+  setOrDelete(url, SORT_PARAM, sort === ProfileListSort.FIRST_SEEN ? FIRST_SEEN_PARAM_VALUE : undefined)
+  replaceUrlIfChanged(url)
+}
+
 const ALLOWED_PROFILE_AUTO_PROPERTIES = new Set([
   '$browser',
   '$browserVersion',
@@ -104,6 +161,9 @@ const Profiles = () => {
   const lastUpdatedLabel = useRelativeTime(lastUpdated)
   const latestProfilesRequestRef = useRef(0)
   const [includeBots, setIncludeBots] = useIncludeBots()
+  // Most recently active first unless the URL carries a sort. The server's default, create time, can
+  // leave someone who was active a minute ago several pages down.
+  const [sort, setSort] = useState(readSortParam)
 
   // Measure the sticky filter bar so the sticky table header can sit just below it.
   const filterRef = useRef<HTMLDivElement>(null)
@@ -125,6 +185,10 @@ const Profiles = () => {
   useEffect(() => {
     writeFilterQueryParams([], propFilters)
   }, [propFilters])
+
+  useEffect(() => {
+    writeSortParam(sort)
+  }, [sort])
 
   useEffect(() => {
     if (!project || !headers) {
@@ -186,6 +250,7 @@ const Profiles = () => {
             filterGroups,
             filterGroupsOperator: LogicalOperator.AND,
             includeBots,
+            sort,
           },
           { headers },
         )) {
@@ -207,7 +272,12 @@ const Profiles = () => {
         }
 
         if (pageToken) {
-          setProfiles(prev => [...prev, ...response.profiles])
+          // A person's sort key can move between pages (an identify merging older history moves first
+          // seen earlier), so a later page can repeat someone already listed. Keep the first row.
+          setProfiles(prev => {
+            const listed = new Set(prev.map(p => p.id))
+            return [...prev, ...response.profiles.filter(p => !listed.has(p.id))]
+          })
         } else {
           // Only a fresh load restamps this. "Load more" appends rows below ones still fetched at the
           // original time, so bumping it there would overstate how current the list is.
@@ -226,7 +296,7 @@ const Profiles = () => {
         }
       }
     },
-    [headers, profilesRPC, propFilters, includeBots],
+    [headers, profilesRPC, propFilters, includeBots, sort],
   )
 
   useEffect(() => {
@@ -240,6 +310,14 @@ const Profiles = () => {
   const handleRefresh = () => {
     trackFeature({ featureId: 'profiles.refresh', featureName: 'Refresh profiles' })
     fetchProfilesPage()
+  }
+
+  // A new sort reloads page one through fetchProfilesPage's dependency on it, since a page token
+  // only seeks under the sort it was issued for. Re-clicking the active column changes nothing.
+  const handleSort = (next: ProfileListSort) => {
+    if (next === sort) return
+    trackFeature({ featureId: 'profiles.sort', featureName: 'Sort profiles' })
+    setSort(next)
   }
 
   if (!project) return <NoProject title="Profiles" icon={ContactRound} />
@@ -315,8 +393,18 @@ const Profiles = () => {
                   <th className="py-2 pr-3 text-left font-medium">Country</th>
                   <th className="py-2 pr-3 text-left font-medium">Platform</th>
                   <th className="py-2 pr-3 text-left font-medium">Activity</th>
-                  <th className="py-2 pl-6 pr-3 text-left font-medium whitespace-nowrap">Last Seen</th>
-                  <th className="py-2 pl-4 text-left font-medium whitespace-nowrap">First Seen</th>
+                  <SortHeader
+                    label="Last Seen"
+                    active={sort === ProfileListSort.LAST_SEEN}
+                    onSelect={() => handleSort(ProfileListSort.LAST_SEEN)}
+                    className="pl-6 pr-3"
+                  />
+                  <SortHeader
+                    label="First Seen"
+                    active={sort === ProfileListSort.FIRST_SEEN}
+                    onSelect={() => handleSort(ProfileListSort.FIRST_SEEN)}
+                    className="pl-4"
+                  />
                 </tr>
               </thead>
               <tbody>
