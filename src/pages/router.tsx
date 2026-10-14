@@ -11,7 +11,7 @@ import SettingsLayout from './routegen/settings/settings-layout'
 import { routes } from './routes'
 
 // Layout groups keep a shell (tab bar + header) mounted across its tab routes. The shell is
-// imported eagerly (only the inner page is lazy), so switching tabs suspends just the body
+// imported eagerly — only the inner page is lazy — so switching tabs suspends just the body
 // (inner Suspense, loader below the tabs) instead of blanking the whole page. `base` selects
 // member routes by path prefix; `outer` is the wouter pattern that stays matched across them
 // (`/*?` = optional trailing segments, so the prefix route also matches the tab-less base URL).
@@ -88,15 +88,16 @@ export const ProjectSync = ({ children }: { children: React.ReactNode }) => {
     )
   }
 
-  // The effect above adopts the route's project a commit later, so a spinner here would only flash.
-  if (projectId && matchedProject && activeProject?.id !== projectId) return null
+  if (projectId && matchedProject && activeProject?.id !== projectId) {
+    return <LoadingSpinner />
+  }
 
   // Keyed on the route's project so switching projects remounts the page rather than re-rendering
   // it with new data underneath its old state. Every generated route is `/p/:projectId/...` (see
   // routes.ts), so this covers all of them. Without it the two switch paths disagree: back/forward
   // changes the URL before `activeProject` catches up, so the gate above unmounts the subtree, but
   // the sidebar batches setActiveProject + navigate into one render, so the gate never trips and a
-  // page's local state survives, now describing the wrong project. Each page fetching its own
+  // page's local state survives — now describing the wrong project. Each page fetching its own
   // project-scoped data would otherwise have to notice that for itself.
   return <Fragment key={projectId}>{children}</Fragment>
 }
@@ -109,8 +110,8 @@ export const ProjectRedirect = () => {
   const [location, navigate] = useLocation()
   const search = useSearch()
   // Waits for activeProjectAtom rather than falling back to projects[0] itself. This route is the
-  // one place the URL names no project, so App's bootstrap always has a pick coming. A second pick
-  // here doesn't just duplicate that one, it beats it: both run off the render where the list
+  // one place the URL names no project, so App's bootstrap always has a pick coming — and a second
+  // pick here doesn't just duplicate that one, it beats it: both run off the render where the list
   // arrives, and this effect's captured projects[0] would navigate before the bootstrap's restored
   // project could land, putting the wrong id in the URL for ProjectSync to then adopt back.
   const project = useAtomValue(activeProjectAtom)
@@ -128,7 +129,7 @@ export const ProjectRedirect = () => {
   }, [location, search, project, navigate])
 
   if (project) return null
-  // A brand-new org, or one whose last project was deleted, has no pick coming: waiting on one
+  // A brand-new org, or one whose last project was deleted, has no pick coming — waiting on one
   // spins forever. Only say so once the list has actually landed, or the wait itself reads as empty.
   if (projectsLoaded && projects.length === 0) {
     return (

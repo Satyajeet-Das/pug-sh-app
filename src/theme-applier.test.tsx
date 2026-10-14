@@ -36,9 +36,6 @@ vi.mock('@/components/layout/sidebar', () => ({ default: () => null }))
 vi.mock('@/pages/shared-dashboard', () => ({ default: () => null }))
 vi.mock('@/pages/sign-in', () => ({ default: () => null }))
 
-// A signed-in App preloads its landing page, and the real overview's ~2s import times these out under load.
-vi.mock('@/pages/routegen/overview/index.page', () => ({ default: () => null }))
-
 // An OS the test can flip, installed before App loads: the theme atoms read the OS when their module
 // is first imported.
 const DARK = '(prefers-color-scheme: dark)'

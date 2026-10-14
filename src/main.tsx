@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import App from './App.tsx'
 import { initAnalytics } from './analytics/pug'
 import { TooltipProvider } from './components/ui/tooltip'
+import 'maplibre-gl/dist/maplibre-gl.css'
 import './index.css'
 
 const checkBrowserStorage = () => {
@@ -71,8 +72,8 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boole
 
 // Outside React on purpose. init() fires the first page_view, so it wants one run in a fixed order:
 // after the storage guard above (the SDK persists identity in localStorage), and before render so
-// that page_view carries the entry URL. Module scope gives exactly that. init() is idempotent (it
-// no-ops on a second call), so this is about ordering, not guarding a StrictMode double-init: an
+// that page_view carries the entry URL. Module scope gives exactly that. init() is idempotent — it
+// no-ops on a second call — so this is about ordering, not guarding a StrictMode double-init: an
 // effect would run after first paint, and only stays single-fire as long as it has no destroy()
 // cleanup for StrictMode's remount to trip.
 initAnalytics()

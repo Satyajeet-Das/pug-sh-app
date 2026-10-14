@@ -29,16 +29,13 @@ vi.mock('@/analytics/pug', () => ({
   analyticsEnabled: false,
 }))
 
-// A signed-in App preloads its landing page, and the real overview's ~2s import times these out under load.
-vi.mock('@/pages/routegen/overview/index.page', () => ({ default: () => null }))
-
 const App = (await import('@/App')).default
 const { jwtAtom, refreshTokenAtom } = await import('@/auth/jwt.atoms')
 const { connectionRedirectURI } = await import('@/auth/oidc')
 
 describe('the auth canvas across a change of screen', () => {
   // restoreMocks clears the factory's implementations before each test, and an undefined batchGet
-  // fails the project fetch, which sets workspaceError, which is itself an auth screen.
+  // fails the project fetch — which sets workspaceError, which is itself an auth screen.
   beforeEach(() => {
     batchGet.mockResolvedValue({ projects: [] })
   })
@@ -65,7 +62,7 @@ describe('the auth canvas across a change of screen', () => {
     // machine and misses once the suite runs enough files in parallel to contend for CPU.
     await screen.findByText('Sign in to Pug', {}, { timeout: 5000 })
     // Awaited, not read straight off: the wall is its own lazy chunk, so it arrives a tick behind
-    // the form. Without this the test is vacuous: happy-dom reports 1024px so the wall's own media
+    // the form. Without this the test is vacuous — happy-dom reports 1024px so the wall's own media
     // query matches and it renders; a narrower default would leave both queries null and toBe would
     // then pass against nothing at all.
     await waitFor(() => expect(container.querySelector('.auth-wall-track')).not.toBeNull())
@@ -81,7 +78,7 @@ describe('the auth canvas across a change of screen', () => {
     // Generous: the picker is a lazy chunk, and vitest transforms it on first import.
     await screen.findByText('Pick where to start', {}, { timeout: 5000 })
     // Same node, not merely another one matching: a remount discards the element, and with it the
-    // drift animation's position, so the cards jump back to where they started.
+    // drift animation's position — the cards jump back to where they started.
     expect(container.querySelector('.auth-wall-track')).toBe(wall)
   })
 
@@ -89,7 +86,7 @@ describe('the auth canvas across a change of screen', () => {
   // canvas on its own. A session restored from storage boots straight into it having shown no auth
   // screen at all, and must spend that wait on the plain spinner.
   it('boots a restored session on the plain spinner, never flashing the wall', async () => {
-    // Held open so the checks below land mid-bootstrap, the one window a flash could occupy.
+    // Held open so the checks below land mid-bootstrap — the one window a flash could occupy.
     let landOrg = () => {}
     orgsList.mockReturnValue(
       new Promise(resolve => {
@@ -113,7 +110,7 @@ describe('the auth canvas across a change of screen', () => {
     )
 
     // Bootstrap is genuinely in flight. Without this the two null checks pass against a tree that
-    // never rendered: the same vacuous pass the test above guards against, in reverse.
+    // never rendered — the same vacuous pass the test above guards against, in reverse.
     await waitFor(() => expect(orgsList).toHaveBeenCalled())
     expect(container.querySelector('.auth-wall-track')).toBeNull()
     // The canvas as a whole, not only the wall: its ground is the other half of the flash.
