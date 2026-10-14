@@ -25,11 +25,16 @@ vi.mock('@/api/rpc', async () => {
     // The over-quota banner reads both; unresolved, it stays unrendered.
     billingRPCAtom: atom({ getBillingStatus: vi.fn(() => new Promise(() => {})) }),
     usageRPCAtom: atom({ getUsage: vi.fn(() => new Promise(() => {})) }),
+    // A signed-in App prefetches the overview schema at boot.
+    insightsRPCAtom: atom({ getFilterSchema: vi.fn(() => new Promise(() => {})) }),
   }
 })
 
+// A signed-in App preloads its landing page, and the real overview's ~2s import times these out under load.
+vi.mock('@/pages/routegen/overview/index.page', () => ({ default: () => null }))
+
 // Identity reports the settled workspace to Pug. It's mounted by App, not by the component under
-// test, but auth.atoms pulls the analytics module in regardless — stub the ingest so no test ever
+// test, but auth.atoms pulls the analytics module in regardless. Stub the ingest so no test ever
 // reaches for the network.
 vi.mock('@/analytics/pug', () => ({
   trackEvent: vi.fn(),
@@ -40,7 +45,7 @@ vi.mock('@/analytics/pug', () => ({
   analyticsEnabled: false,
 }))
 
-const { SessionUrlGuard, WorkspaceBootstrap } = await import('./App')
+const { default: App, SessionUrlGuard, WorkspaceBootstrap } = await import('./App')
 const { ProjectRedirect, ProjectSync } = await import('@/pages/router')
 const {
   activeOrgAtom,
@@ -75,7 +80,7 @@ const seedStore = (lastProjectByOrg?: Record<string, string>) => {
   store.set(bootstrapStatusAtom, 'ready')
   store.set(activeOrgAtom, orgA)
   // Seeded through the real write path rather than by poking the stored shape, so a total break in
-  // recording a visit surfaces here. It does not pin the customer keying itself — every test in this
+  // recording a visit surfaces here. It does not pin the customer keying itself: every test in this
   // file passes against an org-keyed store; workspace.atoms.test.ts is what covers that.
   for (const [orgId, projectId] of Object.entries(lastProjectByOrg ?? {})) {
     store.set(rememberLastProjectAtom, { orgId, projectId })
@@ -129,7 +134,7 @@ describe('WorkspaceBootstrap default project pick', () => {
 
   it('leaves a route-named project to ProjectSync rather than default-picking over it', async () => {
     // Defaulting here would win the race against ProjectSync and make a project the user never asked
-    // for briefly active — which workspaceSettledAtom would report as the settled workspace.
+    // for briefly active, which workspaceSettledAtom would report as the settled workspace.
     const store = mount({ path: '/p/p2/overview', lastProjectByOrg: { 'org-a': 'p1' } })
 
     await waitFor(() => expect(batchGet).toHaveBeenCalled())
@@ -156,7 +161,7 @@ describe('another tab signing in as someone else', () => {
     await waitFor(() => expect(store.get(activeProjectAtom)?.id).toBe('p1'))
 
     // What a storage event from the other tab's sign-in does here: the token syncs, the workspace
-    // doesn't. Left standing, this tab keeps cust-1's org and project under cust-2's session — and
+    // doesn't. Left standing, this tab keeps cust-1's org and project under cust-2's session, and
     // files the next visit it records against cust-2, which is the collision this all exists to stop.
     store.set(jwtAtom, jwtFor('cust-2'))
 
@@ -169,11 +174,11 @@ describe('another tab signing in as someone else', () => {
     await waitFor(() => expect(store.get(activeProjectAtom)?.id).toBe('p1'))
 
     // The transport re-mints this daily: a different token string carrying the same `sub`. It must
-    // not read as an account switch — tearing the workspace down on every refresh would bounce every
+    // not read as an account switch: tearing the workspace down on every refresh would bounce every
     // active user through a full reload once a day.
     //
     // Inside act, or the effect under test hasn't run when the assertions below read the workspace,
-    // and they hold no matter what it does — an `await Promise.resolve()` here passes even against a
+    // and they hold no matter what it does: an `await Promise.resolve()` here passes even against a
     // reset keyed on the raw token, which fires on every refresh.
     await act(async () => {
       store.set(jwtAtom, jwtFor('cust-1', 9e9 + 1))
@@ -203,7 +208,7 @@ describe('dropping the project URL when a session ends', () => {
   it('sends you off the project URL when the session ends under you', async () => {
     const { store, history } = mountGuard('/p/p1/overview')
 
-    // What clearSession does when the server rejects the refresh token — no button, no navigate of
+    // What clearSession does when the server rejects the refresh token: no button, no navigate of
     // its own. Left alone, the next account to sign in on this browser inherits /p/p1.
     store.set(refreshTokenAtom, '')
 
@@ -215,7 +220,7 @@ describe('dropping the project URL when a session ends', () => {
     store.set(refreshTokenAtom, '')
 
     await waitFor(() => expect(history.at(-1)).toBe('/'))
-    // A push would leave the project URL one Back press away — still rendering <SignIn />, so it
+    // A push would leave the project URL one Back press away, still rendering <SignIn />, so it
     // looks fine, and signing in there hands the next account the project this just dropped.
     expect(history).not.toContain('/p/p1/overview')
   })
@@ -236,7 +241,7 @@ describe('dropping the project URL when a session ends', () => {
     const { store, history } = mountGuard('/demo')
 
     // Inside act, or the effect this is asserting about hasn't run yet and the assertion holds no
-    // matter what the guard does — an `await Promise.resolve()` here passes with the /p/ scope
+    // matter what the guard does: an `await Promise.resolve()` here passes with the /p/ scope
     // check deleted outright.
     await act(async () => {
       store.set(refreshTokenAtom, '')
@@ -285,7 +290,7 @@ describe('landing on the bare app URL', () => {
   })
 
   // The post-checkout return URL carries no project id, so a returning buyer lands on a
-  // project-less '/settings/billing' — and that page is the only caller of ConfirmCheckout.
+  // project-less '/settings/billing', and that page is the only caller of ConfirmCheckout.
   it('keeps the path a project-less URL asked for', async () => {
     const { hook, history } = memoryLocation({ path: '/settings/billing', record: true })
     const store = seedStore({ 'org-a': 'p2' })
@@ -316,7 +321,7 @@ describe('landing on the bare app URL', () => {
     await waitFor(() => expect(history.at(-1)).toBe('/p/p2/settings/billing'))
   })
 
-  // The provider states a declined card in the query, and useLocation reads the pathname alone —
+  // The provider states a declined card in the query, and useLocation reads the pathname alone:
   // dropped, the billing page polls for 17.5s and then calls the failure "still confirming".
   it('keeps the query a project-less URL asked for', async () => {
     const { hook, history } = memoryLocation({
@@ -393,7 +398,7 @@ describe('landing on the bare app URL', () => {
 })
 
 // Restoring a session used to spend two sequential round trips: the project list waited on the org
-// to come back, though the only thing it needed from it — the id — was already in localStorage.
+// to come back, though the only thing it needed from it (the id) was already in localStorage.
 describe('restoring the last org', () => {
   const mountRestore = () => {
     const store = createStore()
@@ -661,8 +666,8 @@ describe('signing in to an org the sign-in joined', () => {
 })
 
 // The sidebar switcher does no more than this: set the org, hand the route back to '/'. It used to
-// fetch the target org's projects and pick one itself — a second copy of the bootstrap's restore
-// rule — so what these pin is that the machinery behind '/' really does finish the switch. Rendered
+// fetch the target org's projects and pick one itself (a second copy of the bootstrap's restore
+// rule), so what these pin is that the machinery behind '/' really does finish the switch. Rendered
 // through the real Switch for the reason above: bare, ProjectRedirect re-navigates once the pick
 // lands and passes either way.
 describe('switching organization', () => {
@@ -719,7 +724,7 @@ describe('switching organization', () => {
     )
     // The case the sidebar used to branch on by hand (navigate to '/' when the fetch came back
     // empty). Nothing navigates off '/' now, so the redirect route is what the user is left looking
-    // at — a spinner there would never resolve, since no pick is coming.
+    // at: a spinner there would never resolve, since no pick is coming.
     const store = seedStore()
     const { history, navigate } = mountSwitcher(store)
     await waitFor(() => expect(store.get(activeProjectAtom)?.id).toBe('p1'))
@@ -734,11 +739,11 @@ describe('switching organization', () => {
   })
 
   it('waits, rather than saying so, while the project list is still in flight', async () => {
-    // The empty state above must not be reachable before the list lands, or every switch — and every
-    // cold load — flashes "No projects yet" for the length of the round-trip, telling users an org
+    // The empty state above must not be reachable before the list lands, or every switch (and every
+    // cold load) flashes "No projects yet" for the length of the round-trip, telling users an org
     // they just opened is empty. projectsAtom is [] in both windows, so projectsLoaded is the only
     // thing that separates them: drop it from ProjectRedirect's condition and this is what goes red.
-    // Held open by hand because that window is what's under test — a resolved mock has no window.
+    // Held open by hand because that window is what's under test: a resolved mock has no window.
     let landOrgB = () => {}
     batchGet.mockImplementation(({ orgId }: { orgId: string }) => {
       if (orgId !== 'org-b') return Promise.resolve({ projects })
@@ -788,7 +793,7 @@ describe('switching organization', () => {
     })
 
     // renameOrg writes a fresh Org object for the same org. Keyed on that object rather than its id,
-    // the fetch effect blanks the active project and refetches — so the sidebar's project list and
+    // the fetch effect blanks the active project and refetches, so the sidebar's project list and
     // chip empty out for a round-trip that changed nothing about which projects exist.
     expect(batchGet.mock.calls.length).toBe(fetches)
 
@@ -802,7 +807,7 @@ describe('switching organization', () => {
 })
 
 // Every test above mounts the bootstrap without the sidebar, a tree the real app never has. Both
-// subscribe to projectsAtom, so the list landing flushes both their effects in one pass — a second
+// subscribe to projectsAtom, so the list landing flushes both their effects in one pass: a second
 // default pick in the sidebar reads the activeProject it rendered with, so it cannot see the
 // bootstrap's and overwrites it. The real sidebar, not a stand-in: what's pinned is that the app's
 // own tree holds exactly one copy of the rule.
@@ -812,8 +817,7 @@ describe('the sidebar alongside the bootstrap', () => {
     render(
       <Provider store={store}>
         <Router hook={hook}>
-          {/* App's order: bootstrap first, then the sidebar inside AuthenticatedApp. */}
-          <WorkspaceBootstrap />
+          {/* App's order: the sidebar inside AuthenticatedApp, then the bootstrap. */}
           <SidebarProvider>
             <AppSidebar />
             <Switch>
@@ -827,6 +831,7 @@ describe('the sidebar alongside the bootstrap', () => {
               </Route>
             </Switch>
           </SidebarProvider>
+          <WorkspaceBootstrap />
         </Router>
       </Provider>,
     )
@@ -839,7 +844,7 @@ describe('the sidebar alongside the bootstrap', () => {
 
   it('leaves the restored project alone on the bare app URL', async () => {
     // Held open so the sidebar is mounted before the list lands, putting both picks in one flush. In
-    // the browser that's the sidebar's lazy chunk racing BatchGetProjects — hence only some reloads.
+    // the browser that's the sidebar's lazy chunk racing BatchGetProjects, hence only some reloads.
     let land = () => {}
     batchGet.mockReturnValue(
       new Promise(resolve => {
@@ -883,5 +888,40 @@ describe('the sidebar alongside the bootstrap', () => {
 
     await waitFor(() => expect(history.at(-1)).toBe('/p/b2/overview'))
     expect(store.get(activeProjectAtom)?.id).toBe('b2')
+  })
+})
+
+// Through the real App, since its sibling order decides this: with the router preloaded, the redirect and the sidebar
+// mount in the commit that picks the restored project, and a pick made before they subscribe never reaches them.
+describe('a restored session on the bare app URL', () => {
+  it('opens the project it left off in', async () => {
+    let landOrg = (_: unknown) => {}
+    orgsGet.mockReturnValue(new Promise(resolve => (landOrg = resolve)))
+    batchGet.mockResolvedValue({ projects })
+    orgsList.mockResolvedValue({ orgs: [orgA] })
+    const store = createStore()
+    store.set(refreshTokenAtom, 'refresh-token')
+    store.set(jwtAtom, jwtFor('cust-1'))
+    store.set(lastOrgIdAtom, 'org-a')
+    store.set(rememberLastProjectAtom, { orgId: 'org-a', projectId: 'p2' })
+    const { hook, history } = memoryLocation({ path: '/', record: true })
+
+    render(
+      <Provider store={store}>
+        <Router hook={hook}>
+          <App />
+        </Router>
+      </Provider>,
+    )
+
+    // The org lands only once the boot preload has the router, so it renders in the same commit.
+    await waitFor(() => expect(orgsGet).toHaveBeenCalled())
+    await act(async () => {
+      await new Promise(resolve => setTimeout(resolve, 50))
+      landOrg({ org: orgA })
+    })
+
+    await waitFor(() => expect(history.at(-1)).toBe('/p/p2/overview'))
+    expect(await screen.findByText('Second')).toBeTruthy()
   })
 })

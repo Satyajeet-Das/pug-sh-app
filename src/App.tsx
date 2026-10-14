@@ -453,12 +453,14 @@ const App = () => {
         break that route's rule above, and a signed-in user reading a shared dashboard is a
         session worth seeing. Traits are just thinner there, since bootstrap hasn't run, which is
         also why it's told: waiting for a workspace that is never coming would mean never
-        identifying. Kept next to the line that decides it so the two can't drift apart.
+        identifying. Kept near the line that decides it so the two can't drift apart.
       */}
       <AnalyticsIdentity awaitWorkspace={!isSharedRoute} />
+      {content()}
+      {/* After the content: effects run in sibling order, and the bootstrap can pick the project in the commit that
+          mounts the redirect and the sidebar. A pick made before they subscribe never reaches them. */}
       {isSharedRoute ? null : <WorkspaceBootstrap />}
       {isSharedRoute ? null : <LandingPreload />}
-      {content()}
       <Toaster position="bottom-right" />
     </>
   )
