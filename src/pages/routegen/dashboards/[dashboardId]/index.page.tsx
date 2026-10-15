@@ -1,15 +1,22 @@
 import { useAtomValue, useSetAtom } from 'jotai'
 import { LayoutGrid } from 'lucide-react'
 import { useCallback, useEffect, useMemo, useRef, useState } from 'react'
-import { trackEvent } from '@/analytics/pug'
+import { toast } from 'sonner'
+import { trackEvent, trackFeature } from '@/analytics/pug'
 import type { Dashboard } from '@/api/genproto/dashboard/dashboards/v1/dashboards_pb'
 import { Granularity } from '@/api/genproto/shared/insights/v1/insights_pb'
 import type { TimeRange } from '@/components/date-range-picker'
+import type { ActiveFilter } from '@/components/event-filters/filter-model'
 import Page from '@/components/layout/page'
 import LoadingSpinner from '@/components/loading-spinner'
 import NoProject from '@/components/no-project'
 import { activeProjectAtom } from '@/data/workspace.atoms'
-import { readTimeGranularityQueryParams, writeTimeGranularityQueryParams } from '@/hooks/use-filter-query-params'
+import {
+  readPropFiltersParam,
+  readTimeGranularityQueryParams,
+  writePropFiltersParam,
+  writeTimeGranularityQueryParams,
+} from '@/hooks/use-filter-query-params'
 import { isDashboardTimeRangePreset, resolveDashboardTimeRangePreset } from '@/lib/date-presets'
 import { autoGranularity, clampGranularity, clampRange, resolveTileGranularity } from '@/lib/granularity'
 import { useProjectNavigate } from '@/lib/project-path'
@@ -17,6 +24,7 @@ import { useRouteParams } from '@/lib/route-params'
 import { toastRPCError } from '@/lib/rpc-error'
 import { UNTITLED_DASHBOARD_NAME } from '../constants'
 import { deleteDashboardAtom, fetchDashboardAtom, setDashboardVisibilityAtom } from '../dashboard.atoms'
+import { DashboardFilterBar } from '../dashboard-filter-bar'
 import { type DashboardDeleteTarget } from '../delete-confirmation'
 import { DashboardEmptyState } from '../tiles'
 import { DashboardCanvas } from './dashboard-canvas'
@@ -130,6 +138,20 @@ const DashboardDetail = () => {
   // Edit/draft state machine (selection, tile mutations, save/discard/resume).
   const editor = useDashboardEditor({ dashboardId, dashboard, setDashboard })
 
+  const [initialFilters] = useState(() => readPropFiltersParam())
+  const [globalFilters, setGlobalFilters] = useState<ActiveFilter[]>(initialFilters.filters)
+  useEffect(() => {
+    if (initialFilters.dropped > 0)
+      toast.warning(`Could not restore ${initialFilters.dropped} dashboard filters from URL`)
+  }, [initialFilters])
+  useEffect(() => {
+    writePropFiltersParam(globalFilters)
+  }, [globalFilters])
+  const handleGlobalFiltersChange = (filters: ActiveFilter[]) => {
+    setGlobalFilters(filters)
+    trackFeature({ featureId: 'dashboard.filters', featureName: 'Dashboard filters' })
+  }
+
   // Sharing flow (view-mode only; operates on the saved dashboard, not the draft).
   const [sharing, setSharing] = useState(false)
 
@@ -222,10 +244,18 @@ const DashboardDetail = () => {
 
   return (
     <Page title={dashboard.displayName} description={dashboard.description} header={header}>
+      {(editor.effectiveDashboard?.tiles ?? []).some(tile => tile.content.case === 'insight') ? (
+        <DashboardFilterBar
+          tiles={editor.effectiveDashboard?.tiles ?? []}
+          filters={globalFilters}
+          onChange={handleGlobalFiltersChange}
+        />
+      ) : null}
       <DashboardCanvas
         editor={editor}
         globalTimeRange={globalTimeRange}
         tileGranularityOverride={tileGranularityOverride}
+        globalFilters={globalFilters}
         deleteTarget={deleteTarget}
         deleting={deleting}
         onCancelDelete={() => setDeleteTarget(null)}
@@ -235,4 +265,9 @@ const DashboardDetail = () => {
   )
 }
 
-export default DashboardDetail
+const DashboardDetailRoute = () => {
+  const { dashboardId } = useRouteParams<{ dashboardId: string }>()
+  return <DashboardDetail key={dashboardId} />
+}
+
+export default DashboardDetailRoute
