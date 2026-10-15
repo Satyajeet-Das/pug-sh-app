@@ -59,39 +59,33 @@ export const DashboardFilterBar = ({
 
   const current = result?.key === key ? result : null
   return (
-    <div className="mb-6 space-y-2" role="group" aria-label="Dashboard filters">
-      <div className="flex flex-wrap items-center gap-2">
-        <span className="text-xs text-muted-foreground">Dashboard filters</span>
-        {filters.map((filter, index) => (
-          <FilterChip
-            key={`${filter.source}:${filter.property}:${index}`}
-            filter={filter}
-            onUpdate={next => onChange(filters.map((value, i) => (i === index ? next : value)))}
-            onRemove={() => onChange(filters.filter((_, i) => i !== index))}
-          />
-        ))}
-        {current?.schema ? (
-          <FilterBuilder schema={current.schema} schemaError={null} onAdd={filter => onChange([...filters, filter])} />
-        ) : current?.error ? (
-          <button type="button" className="text-xs text-destructive" onClick={() => setAttempt(value => value + 1)}>
-            Could not load shared filters. Retry
-          </button>
-        ) : (
-          <span className="text-xs text-muted-foreground">Loading shared filters…</span>
-        )}
-        {filters.length > 0 ? (
-          <button
-            type="button"
-            className="text-xs text-muted-foreground hover:text-foreground"
-            onClick={() => onChange([])}
-          >
-            Clear all
-          </button>
-        ) : null}
-      </div>
-      <p className="text-xs text-muted-foreground">
-        Applies to every chart alongside its own filters. Changes are saved in this URL.
-      </p>
+    <div className="-mt-4 mb-10 flex flex-wrap items-center gap-2" role="group" aria-label="Dashboard filters">
+      {filters.map((filter, index) => (
+        <FilterChip
+          key={`${filter.source}:${filter.property}:${index}`}
+          filter={filter}
+          onUpdate={next => onChange(filters.map((value, i) => (i === index ? next : value)))}
+          onRemove={() => onChange(filters.filter((_, i) => i !== index))}
+        />
+      ))}
+      {current?.schema ? (
+        <FilterBuilder schema={current.schema} schemaError={null} onAdd={filter => onChange([...filters, filter])} />
+      ) : current?.error ? (
+        <button type="button" className="text-xs text-destructive" onClick={() => setAttempt(value => value + 1)}>
+          Could not load shared filters. Retry
+        </button>
+      ) : (
+        <span className="text-xs text-muted-foreground">Loading shared filters…</span>
+      )}
+      {filters.length > 0 ? (
+        <button
+          type="button"
+          className="text-xs text-muted-foreground hover:text-foreground"
+          onClick={() => onChange([])}
+        >
+          Clear all
+        </button>
+      ) : null}
     </div>
   )
 }
