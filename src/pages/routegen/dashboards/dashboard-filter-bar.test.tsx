@@ -18,7 +18,7 @@ vi.mock('@/api/rpc', async () => {
   return { insightsRPCAtom: atom({ getFilterSchema: getSchema }) }
 })
 vi.mock('@/data/workspace.atoms', () => ({ projectHeaderAtom: testHeaders }))
-// Exercise schema loading and controller behavior without the popover's focus machinery.
+// The real builder lists properties only inside its open popover; render them flat to assert on.
 vi.mock('@/components/event-filters/filter-builder', () => ({
   FilterBuilder: ({ schema }: { schema: { customPropertyKeys: { name: string }[] } }) => (
     <div data-testid="available">{schema.customPropertyKeys.map(key => key.name).join(',')}</div>
@@ -26,20 +26,36 @@ vi.mock('@/components/event-filters/filter-builder', () => ({
 }))
 
 const { DashboardFilterBar } = await import('./dashboard-filter-bar')
-const tiles = [
-  create(DashboardTileSchema, {
-    content: {
-      case: 'insight',
-      value: { spec: { events: [{ event: { kind: 'signup' } }, { event: { kind: 'purchase' } }] } },
-    },
-  }),
-]
+const eventTile = create(DashboardTileSchema, {
+  content: {
+    case: 'insight',
+    value: { spec: { events: [{ event: { kind: 'signup' } }, { event: { kind: 'purchase' } }] } },
+  },
+})
+const unscopedTile = create(DashboardTileSchema, { content: { case: 'insight', value: { spec: { topK: {} } } } })
 const base = create(GetFilterSchemaResponseSchema)
 const scoped = create(GetFilterSchemaResponseSchema, { customPropertyKeys: [{ name: 'shared' }] })
+const old = create(GetFilterSchemaResponseSchema, { customPropertyKeys: [{ name: 'old' }] })
+
+const pending = new Map<string, (value: unknown) => void>()
+const holdEveryRequest = () =>
+  getSchema.mockImplementation(
+    ({ eventKind }: { eventKind: string }, options: { headers: Record<string, string> }) =>
+      new Promise((resolve, reject) => {
+        pending.set(`${options.headers['x-project-id']}:${eventKind}`, value =>
+          value instanceof Error ? reject(value) : resolve(value),
+        )
+      }),
+  )
+const settle = async (request: string, value: unknown) => {
+  await waitFor(() => expect(pending.has(request)).toBe(true))
+  await act(async () => pending.get(request)?.(value))
+}
 
 beforeEach(() => {
   clearSchemaCache()
   getSchema.mockReset()
+  pending.clear()
 })
 
 describe('dashboard shared filter loading', () => {
@@ -54,7 +70,7 @@ describe('dashboard shared filter loading', () => {
     })
     render(
       <Provider>
-        <DashboardFilterBar tiles={tiles} filters={[]} onChange={vi.fn()} />
+        <DashboardFilterBar tiles={[eventTile]} filters={[]} onChange={vi.fn()} />
       </Provider>,
     )
     await waitFor(() => expect(getSchema).toHaveBeenCalledTimes(3))
@@ -62,30 +78,73 @@ describe('dashboard shared filter loading', () => {
     await act(async () => rejectPurchase(new Error('unavailable')))
     expect(screen.queryByTestId('available')).toBeNull()
     getSchema.mockResolvedValue(scoped)
-    fireEvent.click(screen.getByText('Could not load shared filters. Retry'))
+    fireEvent.click(screen.getByText('Could not load filters. Retry'))
     await waitFor(() => expect(screen.getByTestId('available').textContent).toBe('shared'))
   })
 
-  it('hides the previous project schema immediately and ignores its late responses', async () => {
-    let resolveOld = (_value: typeof base) => {}
-    getSchema.mockImplementation((_req, options) => {
-      if (options.headers['x-project-id'] === 'p1')
-        return new Promise(resolve => {
-          resolveOld = resolve
-        })
-      return Promise.resolve(scoped)
-    })
+  it('hides a loaded schema as soon as the project changes', async () => {
+    holdEveryRequest()
     const store = createStore()
     render(
       <Provider store={store}>
-        <DashboardFilterBar tiles={tiles} filters={[]} onChange={vi.fn()} />
+        <DashboardFilterBar tiles={[eventTile]} filters={[]} onChange={vi.fn()} />
       </Provider>,
     )
-    await waitFor(() => expect(getSchema).toHaveBeenCalledTimes(1))
+    await settle('p1:', base)
+    await settle('p1:signup', old)
+    await settle('p1:purchase', old)
+    await waitFor(() => expect(screen.getByTestId('available').textContent).toBe('old'))
     await act(async () => store.set(testHeaders, { 'x-project-id': 'p2' }))
+    expect(screen.queryByTestId('available')).toBeNull()
+  })
+
+  it.each([
+    ['response', old],
+    ['failure', new Error('late')],
+  ])('ignores a late %s from the previous project', async (_, late) => {
+    holdEveryRequest()
+    const store = createStore()
+    render(
+      <Provider store={store}>
+        <DashboardFilterBar tiles={[eventTile]} filters={[]} onChange={vi.fn()} />
+      </Provider>,
+    )
+    await settle('p1:', base)
+    await settle('p1:signup', old)
+    await act(async () => store.set(testHeaders, { 'x-project-id': 'p2' }))
+    await settle('p2:', base)
+    await settle('p2:signup', scoped)
+    await settle('p2:purchase', scoped)
     await waitFor(() => expect(screen.getByTestId('available').textContent).toBe('shared'))
-    await act(async () => resolveOld(create(GetFilterSchemaResponseSchema, { customPropertyKeys: [{ name: 'old' }] })))
+    await settle('p1:purchase', late)
     expect(screen.getByTestId('available').textContent).toBe('shared')
+  })
+
+  it('makes no request per project event for an unscoped tile', async () => {
+    const events = Array.from({ length: 40 }, (_, i) => ({ name: `event_${i}` }))
+    getSchema.mockImplementation(({ eventKind }: { eventKind: string }) =>
+      Promise.resolve(eventKind ? scoped : create(GetFilterSchemaResponseSchema, { events })),
+    )
+    render(
+      <Provider>
+        <DashboardFilterBar tiles={[eventTile, unscopedTile]} filters={[]} onChange={vi.fn()} />
+      </Provider>,
+    )
+    await waitFor(() => expect(screen.getByTestId('available').textContent).toBe('shared'))
+    expect(getSchema.mock.calls.map(([request]) => request.eventKind).sort()).toEqual(['', 'purchase', 'signup'])
+  })
+
+  it('offers the base schema when every tile is unscoped', async () => {
+    getSchema.mockResolvedValue(
+      create(GetFilterSchemaResponseSchema, { events: [{ name: 'signup' }], customPropertyKeys: [{ name: 'plan' }] }),
+    )
+    render(
+      <Provider>
+        <DashboardFilterBar tiles={[unscopedTile]} filters={[]} onChange={vi.fn()} />
+      </Provider>,
+    )
+    await waitFor(() => expect(screen.getByTestId('available').textContent).toBe('plan'))
+    expect(getSchema).toHaveBeenCalledTimes(1)
   })
 
   it('keeps restored filters visible and clearable even when schemas fail', async () => {
@@ -94,10 +153,10 @@ describe('dashboard shared filter loading', () => {
     const filters = [createFilter('tenant', PropertySource.PROFILE, FilterOperator.EQUALS, 'acme')]
     render(
       <Provider>
-        <DashboardFilterBar tiles={tiles} filters={filters} onChange={onChange} />
+        <DashboardFilterBar tiles={[eventTile]} filters={filters} onChange={onChange} />
       </Provider>,
     )
-    await screen.findByText('Could not load shared filters. Retry')
+    await screen.findByText('Could not load filters. Retry')
     expect(screen.getByText('tenant')).toBeTruthy()
     fireEvent.click(screen.getByText('Clear all'))
     expect(onChange).toHaveBeenCalledWith([])

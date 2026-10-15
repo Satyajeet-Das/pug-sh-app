@@ -22,42 +22,47 @@ export const DashboardFilterBar = ({
   const rpc = useAtomValue(insightsRPCAtom)
   const headers = useAtomValue(projectHeaderAtom)
   const [attempt, setAttempt] = useState(0)
-  // The signature changes for event selection, not layout, titles or formatting.
-  const kindsKey = JSON.stringify(dashboardEventKinds(tiles, ['']))
+  const kindsKey = JSON.stringify(dashboardEventKinds(tiles))
   const projectId = headers?.['x-project-id'] ?? ''
   const key = JSON.stringify([projectId, kindsKey, attempt])
-  const [result, setResult] = useState<{
-    key: string
-    schema: GetFilterSchemaResponse | null
-    error: boolean
-  } | null>(null)
+  const [result, setResult] = useState<{ key: string; schema: GetFilterSchemaResponse | null } | null>(null)
 
   useEffect(() => {
     if (!headers) return
     let cancelled = false
-    const load = async () => {
-      try {
-        const base = await fetchSchemaForKind('', rpc, headers, { force: attempt > 0 })
-        const kinds = JSON.parse(kindsKey) as string[]
-        const selected = kinds.includes('')
-          ? [...new Set([...kinds.filter(Boolean), ...base.events.map(e => e.name)])]
-          : kinds
-        // A partial intersection could offer properties unavailable to a failed event kind.
-        const schemas = await Promise.all(
-          selected.map(kind => fetchSchemaForKind(kind, rpc, headers, { force: attempt > 0 })),
-        )
-        if (!cancelled) setResult({ key, schema: commonDashboardSchema(base, schemas), error: false })
-      } catch {
-        if (!cancelled) setResult({ key, schema: null, error: true })
-      }
-    }
-    void load()
+    const fetchKind = (kind: string) =>
+      fetchSchemaForKind(kind, rpc, headers, { force: attempt > 0 }).catch(err => {
+        console.error(`Filter schema failed for event kind "${kind}":`, err)
+        throw err
+      })
+    // A partial intersection could offer properties unavailable to a failed event kind.
+    void Promise.all(['', ...(JSON.parse(kindsKey) as string[])].map(fetchKind)).then(
+      ([base, ...schemas]) => {
+        if (!cancelled) setResult({ key, schema: commonDashboardSchema(base, schemas) })
+      },
+      () => {
+        if (!cancelled) setResult({ key, schema: null })
+      },
+    )
     return () => {
       cancelled = true
     }
   }, [rpc, headers, kindsKey, key, attempt])
 
   const current = result?.key === key ? result : null
+  let picker = <span className="text-xs text-muted-foreground">Loading filters…</span>
+  if (current?.schema) {
+    picker = (
+      <FilterBuilder schema={current.schema} schemaError={null} onAdd={filter => onChange([...filters, filter])} />
+    )
+  } else if (current) {
+    picker = (
+      <button type="button" className="text-xs text-negative" onClick={() => setAttempt(value => value + 1)}>
+        Could not load filters. Retry
+      </button>
+    )
+  }
+
   return (
     <div className="-mt-4 mb-10 flex flex-wrap items-center gap-2" role="group" aria-label="Dashboard filters">
       {filters.map((filter, index) => (
@@ -68,15 +73,7 @@ export const DashboardFilterBar = ({
           onRemove={() => onChange(filters.filter((_, i) => i !== index))}
         />
       ))}
-      {current?.schema ? (
-        <FilterBuilder schema={current.schema} schemaError={null} onAdd={filter => onChange([...filters, filter])} />
-      ) : current?.error ? (
-        <button type="button" className="text-xs text-destructive" onClick={() => setAttempt(value => value + 1)}>
-          Could not load shared filters. Retry
-        </button>
-      ) : (
-        <span className="text-xs text-muted-foreground">Loading shared filters…</span>
-      )}
+      {picker}
       {filters.length > 0 ? (
         <button
           type="button"

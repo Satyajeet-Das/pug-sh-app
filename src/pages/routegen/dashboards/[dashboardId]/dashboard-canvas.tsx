@@ -11,9 +11,6 @@ import { DashboardEmptyState } from '../tiles'
 import { ResumeBanner } from './resume-banner'
 import type { useDashboardEditor } from './use-dashboard-editor'
 
-// Everything below the page header: the edit bar, resume/delete prompts, the tile
-// grid itself, and the edit-mode add-tile picker + config rail. Driven entirely by
-// the editor hook plus the global time controls.
 export const DashboardCanvas = ({
   editor,
   globalTimeRange,

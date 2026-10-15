@@ -123,7 +123,7 @@ export const DashboardGrid = ({
 
   // Persist only on an explicit drag/resize stop, never on mount/reflow, so loading
   // a dashboard never triggers spurious writes. RGL hands the stop callback the
-  // final layout array directly — we deliberately do NOT read it from onLayoutChange
+  // final layout array directly; we deliberately do NOT read it from onLayoutChange
   // via a ref, because RGL fires the stop callback *before* that final onLayoutChange,
   // so the ref would still hold the pre-edit layout.
   const persistLayout = (layout: readonly LayoutItem[]) => {
@@ -147,7 +147,7 @@ export const DashboardGrid = ({
   }
 
   // The inner tile node, shared by the desktop grid and the mobile stack.
-  // Selection, the highlight ref, and the click handler live here — not on the
+  // Selection, the highlight ref, and the click handler live here, not on the
   // grid-item root: react-grid-layout clones the root (wrapping it in
   // <DraggableCore>/<Resizable>) and overwrites its onMouseDown and ref with its
   // own. Props nested here are never clobbered.
@@ -177,7 +177,7 @@ export const DashboardGrid = ({
     </div>
   )
 
-  // Narrow viewports can't honor the proportional dashboard layout — a half-width
+  // Narrow viewports can't honor the proportional dashboard layout: a half-width
   // tile would be ~180px, a KPI ~60px. Stack every tile full-width in reading
   // order (top-to-bottom, then left-to-right) at its authored height, bypassing
   // react-grid-layout entirely. Keyed off the viewport (not the grid container),
