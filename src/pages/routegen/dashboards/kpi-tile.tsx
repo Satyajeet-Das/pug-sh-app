@@ -19,6 +19,8 @@ type KpiTileProps = {
   formatValue: (value: number) => string
   metadata?: string
   lightMetric?: boolean
+  // Only for a settled count: a pending query, or an average of nothing, has no value, not zero.
+  zeroWhenEmpty?: boolean
 }
 
 // KPI tiles aren't designed for multi-series queries, but if the underlying spec
@@ -27,7 +29,7 @@ type KpiTileProps = {
 // distinguish "no data" from a true zero.
 //
 // Each series is asked what produced it rather than being read off a position, so the comparison
-// window — a separate query, with its own series — summarizes correctly instead of borrowing the
+// window (a separate query, with its own series) summarizes correctly instead of borrowing the
 // current window's order. Only counts sum; SERIES_COLLAPSE decides.
 const summarize = (series: TrendSeries[], aggregationFor: SeriesAggregationResolver) => {
   if (series.length === 0) return Number.NaN
@@ -42,7 +44,7 @@ const summarize = (series: TrendSeries[], aggregationFor: SeriesAggregationResol
   )
 }
 
-// Exported so the traffic stat tiles show the identical increasing/decreasing badge — one
+// Exported so the traffic stat tiles show the identical increasing/decreasing badge: one
 // source of truth for the delta visual across both overview modes.
 export const formatDelta = (current: number, prior: number): { pct: number; label: string } | null => {
   if (!Number.isFinite(prior) || prior === 0) return null
@@ -89,8 +91,12 @@ export const KpiTile = ({
   formatValue,
   metadata,
   lightMetric,
+  zeroWhenEmpty = false,
 }: KpiTileProps) => {
-  const current = useMemo(() => summarize(currentSeries, aggregationFor), [currentSeries, aggregationFor])
+  const current = useMemo(
+    () => (zeroWhenEmpty && currentSeries.length === 0 ? 0 : summarize(currentSeries, aggregationFor)),
+    [currentSeries, aggregationFor, zeroWhenEmpty],
+  )
   const prior = useMemo(
     () => (compare && 'series' in compare ? summarize(compare.series, aggregationFor) : undefined),
     [compare, aggregationFor],
@@ -156,7 +162,7 @@ export const KpiTile = ({
 // width; vectorEffect keeps the stroke crisp despite the non-uniform scale.
 // Exported so the traffic stat cards render the identical sparkline.
 //
-// baseline='min' scales to the data's own range (default — emphasizes shape). baseline='zero'
+// baseline='min' scales to the data's own range (default; emphasizes shape). baseline='zero'
 // anchors the floor at 0 so a near-constant metric reads as flat rather than having its noise
 // amplified to full height; the traffic stat cards use this to match the 0-based main chart.
 export const Sparkline = ({

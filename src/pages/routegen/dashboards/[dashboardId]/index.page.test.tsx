@@ -88,15 +88,25 @@ describe('dashboard page filters', () => {
     for (const request of queriesFor('signup')) expect(filteredOn(request)).toEqual(['tenant'])
   })
 
-  it('drops a restored filter that cannot run and says so', async () => {
+  it('drops a restored filter that cannot run and names it', async () => {
     const warning = vi.spyOn(toast, 'warning')
     open(`/dashboards/d1?${pf([tenant, { ...tenant, property: 'plan', values: [] }])}`)
     await waitFor(() => expect(queriesFor('signup').length).toBeGreaterThan(0))
     for (const request of queriesFor('signup')) expect(filteredOn(request)).toEqual(['tenant'])
     expect(warning).toHaveBeenCalledWith('Could not restore some dashboard filters from URL', {
       id: 'dashboard-filter-parse-warning',
+      description: expect.stringMatching(/^plan: .*not be empty/),
     })
     expect(window.location.search).not.toContain('plan')
+  })
+
+  it('warns about a restored filter it cannot read', async () => {
+    const warning = vi.spyOn(toast, 'warning')
+    open(`/dashboards/d1?${pf([tenant, { property: 1 }])}`)
+    await waitFor(() => expect(queriesFor('signup').length).toBeGreaterThan(0))
+    expect(warning).toHaveBeenCalledWith('Could not restore some dashboard filters from URL', {
+      id: 'dashboard-filter-parse-warning',
+    })
   })
 
   it('removes an in filter emptied in its chip instead of failing every tile', async () => {
@@ -109,6 +119,21 @@ describe('dashboard page filters', () => {
     await waitFor(() => expect(screen.queryByText('tenant')).toBeNull())
     expect(window.location.search).not.toContain('pf=')
     await waitFor(() => expect(filteredOn(queriesFor('signup').at(-1) as QueryRequest)).toEqual([]))
+  })
+
+  it('refuses a chip edit that cannot run and keeps the filter it replaced', async () => {
+    const error = vi.spyOn(toast, 'error')
+    const amount = createFilter('amount', PropertySource.CUSTOM, FilterOperator.GT, '5')
+    open(`/dashboards/d1?${pf([amount])}`)
+    fireEvent.click(await screen.findByText('5'))
+    fireEvent.change(await screen.findByPlaceholderText('Type a value...'), { target: { value: 'abc' } })
+    fireEvent.click(screen.getByText('Apply'))
+    expect(error).toHaveBeenCalledWith('Could not apply the amount filter', {
+      description: expect.stringContaining('valid numbers'),
+    })
+    expect(screen.getByText('5')).toBeTruthy()
+    expect(window.location.search).toContain('amount')
+    for (const request of queriesFor('signup')) expect(filteredOn(request)).toEqual(['amount'])
   })
 
   it('opens the next dashboard without the previous dashboard filters', async () => {

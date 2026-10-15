@@ -7,13 +7,19 @@ import {
 } from '@/api/genproto/common/v1/filter_schema_pb'
 import { FilterOperator, LogicalOperator } from '@/api/genproto/common/v1/filters_pb'
 import { DashboardTileSchema } from '@/api/genproto/dashboard/dashboards/v1/dashboards_pb'
-import { type InsightQuerySpec, InsightQuerySpecSchema } from '@/api/genproto/shared/insights/v1/insights_pb'
+import {
+  type InsightQuerySpec,
+  InsightQuerySpecSchema,
+  TopKQuery_Dimension,
+  UserFlowQuery_NodeKind,
+} from '@/api/genproto/shared/insights/v1/insights_pb'
 import { createFilter } from '@/components/event-filters/filter-model'
 import {
   applyDashboardFilters,
   commonDashboardSchema,
   dashboardEventKinds,
-  isRunnableFilter,
+  dashboardFilterOverlap,
+  filterViolation,
 } from './dashboard-filters'
 
 const tenant = createFilter('tenant', PropertySource.PROFILE, FilterOperator.IN, ['acme', 'other'])
@@ -24,7 +30,8 @@ const tile = (fields: Parameters<typeof create<typeof InsightQuerySpecSchema>>[1
   })
 
 describe('dashboard filter composition', () => {
-  // UNSPECIFIED combines as AND, as on the backend; an empty group counts as absent.
+  // UNSPECIFIED combines as AND, as on the backend. An empty group never reaches the backend
+  // (min_items), so it counts as absent.
   const evaluate = (spec: InsightQuerySpec, values: Record<string, boolean>) => {
     const groups = spec.filterGroups
       .filter(group => group.filters.length > 0)
@@ -78,16 +85,16 @@ describe('dashboard filter composition', () => {
     })
   })
 
-  it('accepts only filters the request validator would send', () => {
-    expect(isRunnableFilter(tenant)).toBe(true)
-    expect(isRunnableFilter(createFilter('amount', PropertySource.CUSTOM, FilterOperator.BETWEEN, ['5', '10']))).toBe(
-      true,
+  it('reports why the request validator would refuse a filter', () => {
+    const amount = (operator: FilterOperator, payload: string | string[]) =>
+      filterViolation(createFilter('amount', PropertySource.CUSTOM, operator, payload))
+    expect(filterViolation(tenant)).toBeUndefined()
+    expect(amount(FilterOperator.BETWEEN, ['5', '10'])).toBeUndefined()
+    expect(filterViolation(createFilter('tenant', PropertySource.PROFILE, FilterOperator.IN, []))).toMatch(
+      /not be empty/,
     )
-    expect(isRunnableFilter(createFilter('tenant', PropertySource.PROFILE, FilterOperator.IN, []))).toBe(false)
-    expect(isRunnableFilter(createFilter('amount', PropertySource.CUSTOM, FilterOperator.GT, 'abc'))).toBe(false)
-    expect(isRunnableFilter(createFilter('amount', PropertySource.CUSTOM, FilterOperator.BETWEEN, ['10', '5']))).toBe(
-      false,
-    )
+    expect(amount(FilterOperator.GT, 'abc')).toMatch(/valid numbers/)
+    expect(amount(FilterOperator.BETWEEN, ['10', '5'])).toMatch(/values\[0\] <= values\[1\]/)
   })
 })
 
@@ -129,5 +136,62 @@ describe('shared dashboard properties', () => {
       create(DashboardTileSchema, { content: { case: 'markdown', value: { body: 'text' } } }),
     ]
     expect(dashboardEventKinds(tiles)).toEqual(['flow', 'page_view', 'purchase', 'rank', 'signup', 'visit'])
+  })
+})
+
+describe('dashboard filter overlap', () => {
+  const browser = createFilter('$browser', PropertySource.AUTO, FilterOperator.EQUALS, 'Safari')
+  const chrome = { property: '$browser', operator: FilterOperator.EQUALS, value: 'Chrome' }
+  const spec = (fields: Parameters<typeof create<typeof InsightQuerySpecSchema>>[1]) =>
+    create(InsightQuerySpecSchema, fields)
+
+  it.each([
+    ['saved filter groups', spec({ filterGroups: [{ filters: [{ property: 'plan', value: 'pro' }, chrome] }] })],
+    ['event filters', spec({ events: [{ event: { kind: 'signup', filters: [chrome] } }] })],
+    ['a session scope', spec({ session: { scope: { filters: [chrome] } } })],
+    ['a top-K scope', spec({ topK: { scope: { filters: [chrome] } } })],
+    ['a map scope', spec({ map: { scope: { filters: [chrome] } } })],
+    ['a user-flow scope', spec({ userFlow: { scope: { filters: [chrome] } } })],
+  ])('finds the tile filter on a dashboard-filtered property in %s', (_, tileSpec) => {
+    expect(dashboardFilterOverlap(tileSpec, [browser]).filters.map(filter => filter.value)).toEqual(['Chrome'])
+  })
+
+  it('matches event properties across sources, and profile traits only with each other', () => {
+    const own = spec({
+      filterGroups: [
+        {
+          filters: [
+            { property: 'plan', source: PropertySource.CUSTOM, value: 'free' },
+            { property: 'tenant', source: PropertySource.CUSTOM, value: 'acme' },
+            { property: 'tenant', source: PropertySource.PROFILE, value: 'acme' },
+          ],
+        },
+      ],
+    })
+    const filters = [createFilter('plan', PropertySource.UNSPECIFIED, FilterOperator.EQUALS, 'pro'), tenant]
+    expect(dashboardFilterOverlap(own, filters).filters.map(filter => [filter.property, filter.source])).toEqual([
+      ['plan', PropertySource.CUSTOM],
+      ['tenant', PropertySource.PROFILE],
+    ])
+  })
+
+  it('finds splits on a dashboard-filtered property', () => {
+    const country = createFilter('$country', PropertySource.AUTO, FilterOperator.EQUALS, 'US')
+    const splits = (tileSpec: InsightQuerySpec) => dashboardFilterOverlap(tileSpec, [browser, country]).splits
+    expect(splits(spec({ breakdowns: [{ property: '$os' }, { property: '$browser' }] }))).toEqual(['$browser'])
+    expect(splits(spec({ topK: { dimension: TopKQuery_Dimension.PROPERTY, property: '$browser' } }))).toEqual([
+      '$browser',
+    ])
+    expect(splits(spec({ topK: { dimension: TopKQuery_Dimension.EVENT_KIND, property: '$browser' } }))).toEqual([])
+    expect(splits(spec({ userFlow: { nodeKind: UserFlowQuery_NodeKind.PROPERTY, nodeProperty: '$browser' } }))).toEqual(
+      ['$browser'],
+    )
+    expect(splits(spec({ map: {} }))).toEqual(['$country'])
+  })
+
+  it('finds nothing without dashboard filters or a spec', () => {
+    const own = spec({ filterGroups: [{ filters: [chrome] }], breakdowns: [{ property: '$browser' }] })
+    expect(dashboardFilterOverlap(own, [])).toEqual({ filters: [], splits: [] })
+    expect(dashboardFilterOverlap(undefined, [browser])).toEqual({ filters: [], splits: [] })
   })
 })

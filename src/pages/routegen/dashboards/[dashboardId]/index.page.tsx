@@ -25,7 +25,7 @@ import { toastRPCError } from '@/lib/rpc-error'
 import { UNTITLED_DASHBOARD_NAME } from '../constants'
 import { deleteDashboardAtom, fetchDashboardAtom, setDashboardVisibilityAtom } from '../dashboard.atoms'
 import { DashboardFilterBar } from '../dashboard-filter-bar'
-import { isRunnableFilter } from '../dashboard-filters'
+import { filterViolation } from '../dashboard-filters'
 import { type DashboardDeleteTarget } from '../delete-confirmation'
 import { DashboardEmptyState } from '../tiles'
 import { DashboardCanvas } from './dashboard-canvas'
@@ -73,7 +73,7 @@ const DashboardDetail = () => {
   }, [loadDashboard, project])
 
   // page_view can't say which dashboard was opened (sanitizeUrl masks the id out of $url), so the id
-  // rides as a property. The ref collapses a refetch, a save or StrictMode's double effect for one id.
+  // rides as a property. The ref keeps a refetch or a save from sending it again.
   const trackedViewRef = useRef<string | null>(null)
   useEffect(() => {
     if (!dashboard || trackedViewRef.current === dashboard.id) return
@@ -95,20 +95,36 @@ const DashboardDetail = () => {
 
   const [restoredFilters] = useState(() => {
     const { filters, dropped } = readPropFiltersParam()
-    const runnable = filters.filter(isRunnableFilter)
-    return { filters: runnable, dropped: dropped + filters.length - runnable.length }
+    const violations = filters.map(filterViolation)
+    return {
+      filters: filters.filter((_, i) => !violations[i]),
+      dropped,
+      refused: filters.flatMap((filter, i) => (violations[i] ? [`${filter.property}: ${violations[i]}`] : [])),
+    }
   })
   const [globalFilters, setGlobalFilters] = useState(restoredFilters.filters)
   useEffect(() => {
-    if (restoredFilters.dropped > 0) {
-      toast.warning('Could not restore some dashboard filters from URL', { id: 'dashboard-filter-parse-warning' })
+    const { dropped, refused } = restoredFilters
+    if (dropped + refused.length > 0) {
+      toast.warning('Could not restore some dashboard filters from URL', {
+        id: 'dashboard-filter-parse-warning',
+        description: refused.join('. ') || undefined,
+      })
     }
   }, [restoredFilters])
   useEffect(() => {
     writePropFiltersParam(globalFilters)
   }, [globalFilters])
   const handleGlobalFiltersChange = (filters: ActiveFilter[]) => {
-    const next = filters.filter(isRunnableFilter)
+    // An emptied in chip is a removal; any other filter that can't run is refused, keeping the one it replaced.
+    const next = filters.filter(filter => filter.kind !== 'multi' || filter.values.length > 0)
+    for (const filter of next) {
+      const violation = filterViolation(filter)
+      if (violation) {
+        toast.error(`Could not apply the ${filter.property} filter`, { description: violation })
+        return
+      }
+    }
     if (next.length > globalFilters.length) {
       trackFeature({ featureId: 'dashboard.filters', featureName: 'Dashboard filters' })
     }

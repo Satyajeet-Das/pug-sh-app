@@ -41,8 +41,10 @@ const pending = new Map<string, (value: unknown) => void>()
 const holdEveryRequest = () =>
   getSchema.mockImplementation(
     ({ eventKind }: { eventKind: string }, options: { headers: Record<string, string> }) =>
-      new Promise(resolve => {
-        pending.set(`${options.headers['x-project-id']}:${eventKind}`, resolve)
+      new Promise((resolve, reject) => {
+        pending.set(`${options.headers['x-project-id']}:${eventKind}`, value =>
+          value instanceof Error ? reject(value) : resolve(value),
+        )
       }),
   )
 const settle = async (request: string, value: unknown) => {
@@ -96,7 +98,10 @@ describe('dashboard shared filter loading', () => {
     expect(screen.queryByTestId('available')).toBeNull()
   })
 
-  it('ignores a late response from the previous project', async () => {
+  it.each([
+    ['response', old],
+    ['failure', new Error('late')],
+  ])('ignores a late %s from the previous project', async (_, late) => {
     holdEveryRequest()
     const store = createStore()
     render(
@@ -111,7 +116,7 @@ describe('dashboard shared filter loading', () => {
     await settle('p2:signup', scoped)
     await settle('p2:purchase', scoped)
     await waitFor(() => expect(screen.getByTestId('available').textContent).toBe('shared'))
-    await settle('p1:purchase', old)
+    await settle('p1:purchase', late)
     expect(screen.getByTestId('available').textContent).toBe('shared')
   })
 
