@@ -61,7 +61,7 @@ export const TileShell = ({
       {editing && onPatch ? (
         // Edit mode keeps the grip so the tile stays draggable. When the title is
         // hidden in view mode, collapse to just the grip so the editor reflects
-        // that state — renaming stays available from the config panel header.
+        // that state; renaming stays available from the config panel header.
         <TileHeaderEdit tile={tile} onPatch={onPatch} hideTitle={hideTitle} />
       ) : hideTitle ? null : (
         <div className={`flex min-w-0 shrink-0 items-start gap-2 pr-8 ${isKpi ? 'mb-1' : 'mb-3'}`}>
@@ -110,10 +110,9 @@ const DashboardInsightTile = ({
   globalFilters?: readonly ActiveFilter[]
   bodyRef?: RefObject<HTMLDivElement | null>
 }) => {
-  const spec = tile.content.case === 'insight' ? tile.content.value.spec : undefined
-  const query = spec
-    ? create(QueryRequestSchema, { spec: applyDashboardFilters(spec, globalFilters ?? []) })
-    : undefined
+  const savedSpec = tile.content.case === 'insight' ? tile.content.value.spec : undefined
+  const spec = applyDashboardFilters(savedSpec, globalFilters ?? [])
+  const query = spec ? create(QueryRequestSchema, { spec }) : undefined
 
   return (
     <TileShell tile={tile} editing={editing} onPatch={onPatch} bodyRef={bodyRef}>
@@ -133,11 +132,11 @@ const DashboardInsightTile = ({
 // Build the "May 13 – Jun 12" time-range label shown in the shared card's corner,
 // mirroring how the insight content resolves its effective range: the global
 // override wins, else the tile's embedded spec, else defaults.
-const formatTileMeta = (tile: DashboardTile, globalTimeRange?: TimeRange) => {
+const formatTileMeta = (tile: DashboardTile, globalTimeRange?: TimeRange, filtered = false) => {
   if (tile.content.case !== 'insight') return ''
   const query = create(QueryRequestSchema, { spec: tile.content.value.spec })
   const range = globalTimeRange ?? resolveDashboardTimeRangePreset(undefined, getProtoRange(query.timeRange))
-  return fmtDateRange(range)
+  return filtered ? `${fmtDateRange(range)} · Filtered` : fmtDateRange(range)
 }
 
 export const DashboardTileBody = ({
@@ -183,7 +182,7 @@ export const DashboardTileBody = ({
         <ShareChartButton
           targetRef={chartRef}
           defaultTitle={tile.displayName}
-          meta={formatTileMeta(tile, globalTimeRange)}
+          meta={formatTileMeta(tile, globalTimeRange, (globalFilters?.length ?? 0) > 0)}
           fallbackName={`chart-${tile.id}`}
           trigger={
             <Button

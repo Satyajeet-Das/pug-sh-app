@@ -25,6 +25,7 @@ import { toastRPCError } from '@/lib/rpc-error'
 import { UNTITLED_DASHBOARD_NAME } from '../constants'
 import { deleteDashboardAtom, fetchDashboardAtom, setDashboardVisibilityAtom } from '../dashboard.atoms'
 import { DashboardFilterBar } from '../dashboard-filter-bar'
+import { isRunnableFilter } from '../dashboard-filters'
 import { type DashboardDeleteTarget } from '../delete-confirmation'
 import { DashboardEmptyState } from '../tiles'
 import { DashboardCanvas } from './dashboard-canvas'
@@ -71,11 +72,8 @@ const DashboardDetail = () => {
     if (project) loadDashboard()
   }, [loadDashboard, project])
 
-  // "Which dashboard was opened", which page_view can't answer: sanitizeUrl masks the id out of
-  // $url (a shared dashboard's id is a bearer credential), so the id has to ride as a property
-  // instead. The ref guard fires once per distinct dashboard id, so a refetch or StrictMode's
-  // double-effect (same id) is collapsed, while navigating to another dashboard (new id) re-fires —
-  // it dedups on the id itself, no remount required.
+  // page_view can't say which dashboard was opened (sanitizeUrl masks the id out of $url), so the id
+  // rides as a property. The ref collapses a refetch, a save or StrictMode's double effect for one id.
   const trackedViewRef = useRef<string | null>(null)
   useEffect(() => {
     if (!dashboard || trackedViewRef.current === dashboard.id) return
@@ -83,7 +81,7 @@ const DashboardDetail = () => {
     trackEvent('dashboard_viewed', { dashboardId: dashboard.id })
   }, [dashboard])
 
-  // Global time + granularity controls, mirrored to the URL query string.
+  // Global time, granularity and filter controls, mirrored to the URL query string.
   const initialGlobalOverrides = useMemo(() => readTimeGranularityQueryParams(), [])
   const [globalTimeRange, setGlobalTimeRange] = useState<TimeRange | undefined>(() => initialGlobalOverrides.timeRange)
   const [globalGranularity, setGlobalGranularity] = useState(() => {
@@ -95,8 +93,30 @@ const DashboardDetail = () => {
     writeTimeGranularityQueryParams({ timeRange: globalTimeRange, granularity: globalGranularity })
   }, [globalGranularity, globalTimeRange])
 
+  const [restoredFilters] = useState(() => {
+    const { filters, dropped } = readPropFiltersParam()
+    const runnable = filters.filter(isRunnableFilter)
+    return { filters: runnable, dropped: dropped + filters.length - runnable.length }
+  })
+  const [globalFilters, setGlobalFilters] = useState(restoredFilters.filters)
+  useEffect(() => {
+    if (restoredFilters.dropped > 0) {
+      toast.warning('Could not restore some dashboard filters from URL', { id: 'dashboard-filter-parse-warning' })
+    }
+  }, [restoredFilters])
+  useEffect(() => {
+    writePropFiltersParam(globalFilters)
+  }, [globalFilters])
+  const handleGlobalFiltersChange = (filters: ActiveFilter[]) => {
+    const next = filters.filter(isRunnableFilter)
+    if (next.length > globalFilters.length) {
+      trackFeature({ featureId: 'dashboard.filters', featureName: 'Dashboard filters' })
+    }
+    setGlobalFilters(next)
+  }
+
   // Seed the global range/granularity from the dashboard's saved default the first time it
-  // loads — but only when the user didn't arrive with an explicit range in the URL (a
+  // loads, but only when the user didn't arrive with an explicit range in the URL (a
   // shared/bookmarked link wins), and only once per dashboard (so it never clobbers a pick
   // made afterward, including after a save). With no saved default the controls stay empty
   // and each tile falls back to its own range.
@@ -131,26 +151,12 @@ const DashboardDetail = () => {
     [dashboard],
   )
 
-  // Resolve "Auto" to a concrete granularity before handing it to tiles — otherwise tiles fall back
+  // Resolve "Auto" to a concrete granularity before handing it to tiles; otherwise tiles fall back
   // to their own saved granularity against the global range, which may exceed its cap.
   const tileGranularityOverride = resolveTileGranularity(globalGranularity, globalTimeRange)
 
   // Edit/draft state machine (selection, tile mutations, save/discard/resume).
   const editor = useDashboardEditor({ dashboardId, dashboard, setDashboard })
-
-  const [initialFilters] = useState(() => readPropFiltersParam())
-  const [globalFilters, setGlobalFilters] = useState<ActiveFilter[]>(initialFilters.filters)
-  useEffect(() => {
-    if (initialFilters.dropped > 0)
-      toast.warning(`Could not restore ${initialFilters.dropped} dashboard filters from URL`)
-  }, [initialFilters])
-  useEffect(() => {
-    writePropFiltersParam(globalFilters)
-  }, [globalFilters])
-  const handleGlobalFiltersChange = (filters: ActiveFilter[]) => {
-    setGlobalFilters(filters)
-    trackFeature({ featureId: 'dashboard.filters', featureName: 'Dashboard filters' })
-  }
 
   // Sharing flow (view-mode only; operates on the saved dashboard, not the draft).
   const [sharing, setSharing] = useState(false)
@@ -242,14 +248,12 @@ const DashboardDetail = () => {
     />
   )
 
+  const tiles = editor.effectiveDashboard?.tiles ?? []
+
   return (
     <Page title={dashboard.displayName} description={dashboard.description} header={header}>
-      {(editor.effectiveDashboard?.tiles ?? []).some(tile => tile.content.case === 'insight') ? (
-        <DashboardFilterBar
-          tiles={editor.effectiveDashboard?.tiles ?? []}
-          filters={globalFilters}
-          onChange={handleGlobalFiltersChange}
-        />
+      {tiles.some(tile => tile.content.case === 'insight') ? (
+        <DashboardFilterBar tiles={tiles} filters={globalFilters} onChange={handleGlobalFiltersChange} />
       ) : null}
       <DashboardCanvas
         editor={editor}
