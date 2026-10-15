@@ -3,6 +3,7 @@ import { type LayoutItem, Responsive, type ResponsiveLayouts, WidthProvider } fr
 import { type DashboardTile, DashboardTileViewMode } from '@/api/genproto/dashboard/dashboards/v1/dashboards_pb'
 import type { Granularity } from '@/api/genproto/shared/insights/v1/insights_pb'
 import type { TimeRange } from '@/components/date-range-picker'
+import type { ActiveFilter } from '@/components/event-filters/filter-model'
 import { useIsMobile } from '@/hooks/use-mobile'
 import { BREAKPOINTS, TILE_MIN_H } from './constants'
 import { tilePosition } from './draft-state'
@@ -88,6 +89,7 @@ export const DashboardGrid = ({
   onLayoutsChange,
   globalTimeRange,
   globalGranularity,
+  globalFilters,
   renderTile,
 }: {
   tiles: DashboardTile[]
@@ -102,6 +104,7 @@ export const DashboardGrid = ({
   onLayoutsChange?: (layouts: DashboardLayouts) => void
   globalTimeRange?: TimeRange
   globalGranularity?: Granularity
+  globalFilters?: readonly ActiveFilter[]
   // Override how each tile's body renders. Defaults to the editable DashboardTileBody;
   // the public/read-only viewer passes a body that renders pre-computed results.
   renderTile?: (tile: DashboardTile) => ReactNode
@@ -167,6 +170,7 @@ export const DashboardGrid = ({
           onPatch={editable && onPatchTile ? patch => onPatchTile(tile.id, patch) : undefined}
           globalTimeRange={globalTimeRange}
           globalGranularity={globalGranularity}
+          globalFilters={globalFilters}
           onDuplicate={editable ? onDuplicateTile : undefined}
         />
       )}

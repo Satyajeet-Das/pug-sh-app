@@ -5,12 +5,14 @@ import snarkdown from 'snarkdown'
 import { type DashboardTile, DashboardTileViewMode } from '@/api/genproto/dashboard/dashboards/v1/dashboards_pb'
 import { type Granularity, QueryRequestSchema } from '@/api/genproto/shared/insights/v1/insights_pb'
 import type { TimeRange } from '@/components/date-range-picker'
+import type { ActiveFilter } from '@/components/event-filters/filter-model'
 import { ShareChartButton } from '@/components/share-chart-button'
 import { TwemojiIcon } from '@/components/twemoji-icon'
 import { Button } from '@/components/ui/button'
 import { DropdownMenu, DropdownMenuContent, DropdownMenuItem, DropdownMenuTrigger } from '@/components/ui/dropdown-menu'
 import { fmtDateRange, resolveDashboardTimeRangePreset } from '@/lib/date-presets'
 import { accentStripClass } from './accent-palette'
+import { applyDashboardFilters } from './dashboard-filters'
 import { DashboardInsightContent } from './insight-tile-content'
 import { getProtoRange } from './query'
 import { TileHeaderEdit } from './tile-header-edit'
@@ -100,14 +102,18 @@ const DashboardInsightTile = ({
   onPatch,
   globalTimeRange,
   globalGranularity,
+  globalFilters,
   bodyRef,
 }: TileContentProps & {
   globalTimeRange?: TimeRange
   globalGranularity?: Granularity
+  globalFilters?: readonly ActiveFilter[]
   bodyRef?: RefObject<HTMLDivElement | null>
 }) => {
   const spec = tile.content.case === 'insight' ? tile.content.value.spec : undefined
-  const query = spec ? create(QueryRequestSchema, { spec }) : undefined
+  const query = spec
+    ? create(QueryRequestSchema, { spec: applyDashboardFilters(spec, globalFilters ?? []) })
+    : undefined
 
   return (
     <TileShell tile={tile} editing={editing} onPatch={onPatch} bodyRef={bodyRef}>
@@ -141,6 +147,7 @@ export const DashboardTileBody = ({
   onDuplicate,
   globalTimeRange,
   globalGranularity,
+  globalFilters,
 }: {
   tile: DashboardTile
   editing?: boolean
@@ -148,6 +155,7 @@ export const DashboardTileBody = ({
   onDuplicate?: (tile: DashboardTile) => void
   globalTimeRange?: TimeRange
   globalGranularity?: Granularity
+  globalFilters?: readonly ActiveFilter[]
 }) => {
   // Points at just the chart region so the share button snapshots the chart as-is,
   // then draws its own card chrome (editable title + time range) around it.
@@ -166,6 +174,7 @@ export const DashboardTileBody = ({
             onPatch={onPatch}
             globalTimeRange={globalTimeRange}
             globalGranularity={globalGranularity}
+            globalFilters={globalFilters}
             bodyRef={chartRef}
           />
         )}
