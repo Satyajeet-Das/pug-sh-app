@@ -6,7 +6,7 @@
   // Replaces knip's default entry patterns rather than extending them. Safe only because plugin
   // entries are separate and additive: Vite roots the app graph at index.html -> src/main.tsx. The
   // CLA gate is its own program with its own runner, so it roots its own graph. The tests are the
-  // only entry it needs — they reach main.ts and test-support.ts, and naming main.ts as well earns
+  // only entry it needs: they reach main.ts and test-support.ts, and naming main.ts as well earns
   // a "redundant entry pattern" hint.
   "entry": ["scripts/gen-favicons.mjs", "tools/cla/gate/*.test.ts"],
   // Flip to false for a second tier of `export` keywords on symbols only used in their own file.
@@ -14,10 +14,7 @@
   // a gate we can be red on. The Knip section in CLAUDE.md carries the current count.
   "ignoreExportsUsedInFile": true,
   "ignoreDependencies": [
-    // buf.gen.yaml runs it as a `local:` plugin binary — no import site to find.
-    "@bufbuild/protoc-gen-es",
-    // Reached only from vendored charts that nothing reachable imports, so knip never parses the
-    // import and reads it as dead. Ignored files app code *can* reach still count.
-    "@visx/pattern"
+    // buf.gen.yaml runs it as a `local:` plugin binary, so there is no import site to find.
+    "@bufbuild/protoc-gen-es"
   ]
 }

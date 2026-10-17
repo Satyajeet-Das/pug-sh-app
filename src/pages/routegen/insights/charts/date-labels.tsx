@@ -12,7 +12,7 @@ import { fitAxisTicks } from './helpers'
 // boundaries, and vary by granularity or every hour bucket reads "Jul 19".
 //
 // The labels reach the axis and the tooltip through `dateLabels` on the chart
-// context, so re-providing that context is a supported seam — no vendored file
+// context, so re-providing that context is a supported seam: no vendored file
 // is touched, and a re-add can't revert it. Both consumers are wrapped below;
 // each re-provides independently because they are siblings under the shell, which
 // is also what lets them carry different detail for the same bucket.
@@ -59,10 +59,8 @@ export function XAxis({ numTicks = 5, ...props }: XAxisProps) {
 // an unrecognised one puts the labels inside the series reveal clip.
 XAxis.displayName = 'XAxis'
 
-// The hover date pill hardcodes its type and padding and exposes no size prop,
-// and its 24px rows can't be shrunk directly — TICKER_ITEM_HEIGHT drives the
-// scroll offsets, so a shorter row desyncs the stack onto the wrong date.
-// Scaling the whole pill sidesteps that: the offsets live inside the scaled box.
+// The hover date pill hardcodes its type and padding and exposes no size prop. Its 24px rows
+// drive the scroll offsets (TICKER_ITEM_HEIGHT), so the type and padding shrink around them.
 const PILL_SCALE_VAR = '--pill-scale'
 
 // The two dimensions charts actually span here: 120px is the dashboard tile's
@@ -70,6 +68,7 @@ const PILL_SCALE_VAR = '--pill-scale'
 // narrowest up to a half-width one.
 const HEIGHT_RANGE = [120, 280]
 const WIDTH_RANGE = [360, 600]
+// PILL_SCALING's vertical padding reaches 0 here, leaving the bare 24px row.
 const MIN_PILL_SCALE = 0.75
 
 const fit = (value: number, [min, max]: number[]) => Math.min(1, Math.max(0, (value - min) / (max - min)))
@@ -81,11 +80,10 @@ export const pillScale = (width: number, height: number) => {
   return Math.round((MIN_PILL_SCALE + t * (1 - MIN_PILL_SCALE)) * 100) / 100
 }
 
-// The pill is the only element here carrying both classes: the tooltip's series
-// dots are rounded-full too, but not overflow-hidden. Anchored bottom so it
-// shrinks upward and stays put against the axis.
+// Never a `scale` or `zoom`: the ticker sizes its columns with getBoundingClientRect, which counts
+// an ancestor transform, so a column shrinks twice and clips its label. Only the pill has both classes.
 export const PILL_SCALING =
-  '[&_.overflow-hidden.rounded-full]:origin-bottom [&_.overflow-hidden.rounded-full]:scale-[var(--pill-scale,1)]'
+  '[&_.overflow-hidden.rounded-full]:px-[calc(var(--pill-scale,1)*1rem)] [&_.overflow-hidden.rounded-full]:py-[calc((var(--pill-scale,1)_-_0.75)*1rem)] [&_.overflow-hidden.rounded-full_span]:text-[length:max(0.75rem,calc(var(--pill-scale,1)*0.875rem))]'
 
 export function ChartTooltip(props: ChartTooltipProps) {
   const value = useDateLabelledContext('tooltip')

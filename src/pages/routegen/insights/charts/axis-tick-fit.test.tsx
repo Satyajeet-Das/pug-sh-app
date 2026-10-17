@@ -9,7 +9,7 @@ import { LineChart } from './line-chart'
 import type { ChartPoint } from './types'
 
 describe('fitAxisTicks', () => {
-  // "Jul 23 18:00" — the day-carrying hour label from a rolling-24h window.
+  // "Jul 23 18:00": the day-carrying hour label from a rolling-24h window.
   const wide = Array.from({ length: 5 }, () => 'Jul 23 18:00')
 
   it('keeps the requested count when the width has room', () => {
@@ -42,11 +42,11 @@ describe('fitAxisTicks', () => {
   })
 })
 
-// The vendored charts size off the DOM, which happy-dom reports as 0x0 — without a real size they
+// The vendored charts size off the DOM, which happy-dom reports as 0x0; without a real size they
 // render nothing and every assertion passes vacuously. Mutable so a test can pick the width.
 let mockChartSize = { width: 900, height: 400 }
 
-vi.mock('@visx/responsive', () => ({
+vi.mock('@/components/charts/chart-parent-size', () => ({
   ParentSize: ({ children }: { children: (size: { width: number; height: number }) => ReactNode }) =>
     children(mockChartSize),
 }))
