@@ -122,7 +122,7 @@ export const KpiTile = ({
   const contextParts = [compare && !('error' in compare) ? compare.label : null, metadata].filter(Boolean)
 
   const deltaRow = (badge: ReactNode, className?: string) => (
-    <div className={cn('flex flex-wrap items-center gap-x-2 gap-y-1', className)}>
+    <div className={cn('flex min-h-5 flex-wrap items-center gap-x-2 gap-y-1', className)}>
       {badge}
       {contextParts.length > 0 ? (
         <span className="text-xs text-muted-foreground">{contextParts.join(' · ')}</span>
@@ -136,8 +136,8 @@ export const KpiTile = ({
     ) : compare && 'pending' in compare ? (
       // Holds the row's space while the comparison loads, so the tile doesn't grow when it lands.
       deltaRow(<DeltaBadge pct={0} label="0.0%" />, 'invisible')
-    ) : delta !== null && compare && 'series' in compare ? (
-      deltaRow(<DeltaBadge pct={delta.pct} label={delta.label} />)
+    ) : compare && 'series' in compare ? (
+      deltaRow(delta && <DeltaBadge pct={delta.pct} label={delta.label} />)
     ) : contextParts.length > 0 ? (
       <span className="text-xs text-muted-foreground">{contextParts.join(' · ')}</span>
     ) : null
