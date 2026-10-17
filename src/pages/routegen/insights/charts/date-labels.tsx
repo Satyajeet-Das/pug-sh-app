@@ -1,10 +1,18 @@
+import { type MotionStyle, motion, useSpring } from 'motion/react'
 import { createContext, useContext, useEffect, useMemo } from 'react'
-import ChartStableContext, { type ChartStableContextValue, useChartStable } from '@/components/charts/chart-context'
+import { createPortal } from 'react-dom'
+import { useChartConfig } from '@/components/charts/chart-config-context'
+import ChartStableContext, {
+  type ChartStableContextValue,
+  useChartHover,
+  useChartStable,
+} from '@/components/charts/chart-context'
 import { ChartTooltip as VendoredTooltip } from '@/components/charts/tooltip'
 import type { ChartTooltipProps } from '@/components/charts/tooltip/chart-tooltip'
+import { DateTicker } from '@/components/charts/tooltip/date-ticker'
 import { XAxis as VendoredXAxis, type XAxisProps } from '@/components/charts/x-axis'
 import { PAD_ROW_KEY } from './common'
-import { fitAxisTicks } from './helpers'
+import { AXIS_LABEL_PX_PER_CHAR, fitAxisTicks } from './helpers'
 
 // The vendored charts format x labels internally with a browser-local,
 // granularity-blind formatter and expose no prop for it. Bucket labels have to
@@ -43,8 +51,18 @@ const useDateLabelledContext = (surface: keyof DateLabelFormatters) => {
   }, [stable, formatters, surface])
 }
 
+// The axis centres each label on its bucket, so the last one hung half a label past the plot and only a
+// wide right margin kept it unclipped. Clamping where labels land keeps them inside the chart instead.
+const keepLabelsInside = ({ xScale, dateLabels, innerWidth, margin }: ChartStableContextValue) => {
+  const half = (dateLabels.reduce((max, label) => Math.max(max, label.length), 0) * AXIS_LABEL_PX_PER_CHAR) / 2
+  const min = half - margin.left
+  const max = innerWidth + margin.right - half
+  return Object.assign((date: Date) => Math.min(Math.max(xScale(date), min), max), xScale)
+}
+
 export function XAxis({ numTicks = 5, ...props }: XAxisProps) {
-  const value = useDateLabelledContext('axis')
+  const labelled = useDateLabelledContext('axis')
+  const value = useMemo(() => ({ ...labelled, xScale: keepLabelsInside(labelled) }), [labelled])
   const fittedNumTicks = fitAxisTicks(value.innerWidth, value.dateLabels, numTicks)
 
   return (
@@ -96,9 +114,51 @@ export function ChartTooltip(props: ChartTooltipProps) {
 
   return (
     <ChartStableContext.Provider value={value}>
-      <VendoredTooltip {...props} />
+      <VendoredTooltip {...props} showDatePill={false} />
+      <DatePill />
     </ChartStableContext.Provider>
   )
 }
 
 ChartTooltip.displayName = 'ChartTooltip'
+
+// Upstream's pill centres on the hovered bucket and never clamps, so at either end of the chart the tile
+// clipped part of it. This is its tracker with the clamp added.
+function DatePill() {
+  const { tooltipData } = useChartHover()
+  const { dateLabels } = useChartStable()
+  if (!tooltipData || dateLabels.length === 0) return null
+  return <TrackedDatePill index={tooltipData.index} x={tooltipData.x} />
+}
+
+// Mounted per hover, as upstream does, so the spring starts at the pointer instead of sliding in.
+function TrackedDatePill({ index, x }: { index: number; x: number }) {
+  const { containerRef, dateLabels, margin, width } = useChartStable()
+  const { tooltipSpring } = useChartConfig()
+  const target = x + margin.left
+  const discrete = dateLabels.length > 60
+  const left = useSpring(target, tooltipSpring)
+  if (!discrete) left.set(target)
+
+  const container = containerRef.current
+  if (!container) return null
+
+  // Clamped in CSS so it follows the spring and the ticker's animated width frame by frame:
+  // `translate` percentages resolve against the pill's own width.
+  return createPortal(
+    <motion.div
+      className="pointer-events-none absolute z-50"
+      style={
+        {
+          '--pill-x': discrete ? target : left,
+          left: 'calc(var(--pill-x) * 1px)',
+          translate: `clamp(calc(var(--pill-x) * -1px), -50%, calc(${width}px - var(--pill-x) * 1px - 100%))`,
+          bottom: 4,
+        } as MotionStyle
+      }
+    >
+      <DateTicker currentIndex={index} labels={dateLabels} visible />
+    </motion.div>,
+    container,
+  )
+}

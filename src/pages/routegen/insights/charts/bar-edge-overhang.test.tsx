@@ -4,13 +4,14 @@ import { describe, expect, it, vi } from 'vitest'
 import { Granularity } from '@/api/genproto/shared/insights/v1/insights_pb'
 import type { SeriesColor } from '@/lib/event-colors'
 import { BarChart } from './bar-chart'
+import { CHART_MARGIN } from './common'
 import type { ChartPoint } from './types'
 
 // happy-dom reports the container as 0x0, and an unsized chart renders no bars at all,
 // so every assertion below would pass vacuously.
 const WIDTH = 720
 const HEIGHT = 300
-const INNER_WIDTH = WIDTH - 40 - 40 // margin.left/right keep the vendored 40px default
+const INNER_WIDTH = WIDTH - CHART_MARGIN.left - CHART_MARGIN.right
 
 vi.mock('@/components/charts/chart-parent-size', () => ({
   ParentSize: ({ children }: { children: (size: { width: number; height: number }) => ReactNode }) =>
