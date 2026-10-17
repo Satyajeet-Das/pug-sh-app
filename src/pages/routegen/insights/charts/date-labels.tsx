@@ -12,7 +12,7 @@ import type { ChartTooltipProps } from '@/components/charts/tooltip/chart-toolti
 import { DateTicker } from '@/components/charts/tooltip/date-ticker'
 import { XAxis as VendoredXAxis, type XAxisProps } from '@/components/charts/x-axis'
 import { PAD_ROW_KEY } from './common'
-import { AXIS_LABEL_PX_PER_CHAR, fitAxisTicks } from './helpers'
+import { AXIS_LABEL_PX_PER_CHAR, pickAxisTicks } from './helpers'
 
 // The vendored charts format x labels internally with a browser-local,
 // granularity-blind formatter and expose no prop for it. Bucket labels have to
@@ -60,14 +60,27 @@ const keepLabelsInside = ({ xScale, dateLabels, innerWidth, margin }: ChartStabl
   return Object.assign((date: Date) => Math.min(Math.max(xScale(date), min), max), xScale)
 }
 
+// The axis is handed only the rows that get a tick, and asked for all of them, so its own layout
+// scorer never runs. The rest are holes rather than a shorter array: the axis skips a missing row,
+// and indices stay aligned with the hover state it reads them against.
 export function XAxis({ numTicks = 5, ...props }: XAxisProps) {
   const labelled = useDateLabelledContext('axis')
-  const value = useMemo(() => ({ ...labelled, xScale: keepLabelsInside(labelled) }), [labelled])
-  const fittedNumTicks = fitAxisTicks(value.innerWidth, value.dateLabels, numTicks)
+  const value = useMemo(() => {
+    const xScale = keepLabelsInside(labelled)
+    const { data, dateLabels, xAccessor } = labelled
+    const ticks = pickAxisTicks(
+      dateLabels,
+      data.map(d => xScale(xAccessor(d))),
+      numTicks,
+    )
+    const tickRows: typeof data = new Array(data.length)
+    for (const index of ticks) tickRows[index] = data[index]
+    return { ...labelled, xScale, data: tickRows }
+  }, [labelled, numTicks])
 
   return (
     <ChartStableContext.Provider value={value}>
-      <VendoredXAxis {...props} numTicks={fittedNumTicks} />
+      <VendoredXAxis {...props} numTicks={value.data.length} />
     </ChartStableContext.Provider>
   )
 }
