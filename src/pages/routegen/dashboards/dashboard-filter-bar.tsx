@@ -64,7 +64,7 @@ export const DashboardFilterBar = ({
   }
 
   return (
-    <div className="-mt-4 mb-10 flex flex-wrap items-center gap-2" role="group" aria-label="Dashboard filters">
+    <div className="-mt-4 mb-10 flex min-h-7 flex-wrap items-center gap-2" role="group" aria-label="Dashboard filters">
       {filters.map((filter, index) => (
         <FilterChip
           key={`${filter.source}:${filter.property}:${index}`}

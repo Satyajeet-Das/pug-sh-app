@@ -170,17 +170,17 @@ export const DashboardInsightContent = ({
     { enabled: !!comparisonQuery && !!headers, debounceMs: 0 },
   )
 
-  const comparisonResult = comparisonData ?? { case: undefined, value: undefined }
-
   // Gated on the query rather than the view mode, so both readers (the KPI delta and the dashed
   // chart series) get it, and neither can be handed a window that wasn't queried.
   const compare = useMemo<KpiCompare | undefined>(() => {
     if (!comparisonQuery) return undefined
     const compareLabel = formatComparePeriodLabel(compareWindow)
     if (comparisonError) return { error: true, label: compareLabel }
-    if (comparisonResult.case === 'trends') return { series: [...comparisonResult.value.series], label: compareLabel }
+    // Until both windows land: a comparison alone has no delta, and its fallback row is a different height.
+    if (!comparisonData || !(data || error)) return { pending: true, label: compareLabel }
+    if (comparisonData.case === 'trends') return { series: [...comparisonData.value.series], label: compareLabel }
     return undefined
-  }, [comparisonQuery, comparisonError, comparisonResult, compareWindow])
+  }, [comparisonQuery, comparisonError, comparisonData, data, error, compareWindow])
 
   return (
     <InsightTileView

@@ -47,10 +47,44 @@ const DashboardDetail = () => {
   const setVisibility = useSetAtom(setDashboardVisibilityAtom)
   const navigate = useProjectNavigate()
 
+  // Global time and granularity controls, mirrored to the URL query string.
+  const initialGlobalOverrides = useMemo(() => readTimeGranularityQueryParams(), [])
+  const [globalTimeRange, setGlobalTimeRange] = useState<TimeRange | undefined>(() => initialGlobalOverrides.timeRange)
+  const [globalGranularity, setGlobalGranularity] = useState(() => {
+    if (initialGlobalOverrides.granularity !== undefined) return initialGlobalOverrides.granularity
+    return autoGranularity(initialGlobalOverrides.timeRange)
+  })
+
+  useEffect(() => {
+    writeTimeGranularityQueryParams({ timeRange: globalTimeRange, granularity: globalGranularity })
+  }, [globalGranularity, globalTimeRange])
+
   // Dashboard data
   const [dashboard, setDashboard] = useState<Dashboard | null>(null)
   const [loading, setLoading] = useState(false)
   const [error, setError] = useState<string | null>(null)
+
+  // Seed the global range/granularity from the dashboard's saved default the first time it
+  // loads, but only when the user didn't arrive with an explicit range in the URL (a
+  // shared/bookmarked link wins), and only once per dashboard (so it never clobbers a pick
+  // made afterward, including after a save). With no saved default the controls stay empty
+  // and each tile falls back to its own range.
+  const seededDashboardIdRef = useRef<string | null>(null)
+  const seedGlobalControls = useCallback(
+    (loaded: Dashboard) => {
+      if (seededDashboardIdRef.current === loaded.id) return
+      seededDashboardIdRef.current = loaded.id
+      if (initialGlobalOverrides.timeRange || !isDashboardTimeRangePreset(loaded.defaultTimeRange)) return
+      const range = resolveDashboardTimeRangePreset(loaded.defaultTimeRange)
+      setGlobalTimeRange(range)
+      // Keep a URL granularity if present; else honor the saved default granularity (clamped to
+      // the range's cap), else derive it from the range ("Auto").
+      if (initialGlobalOverrides.granularity === undefined) {
+        setGlobalGranularity(resolveDefaultGranularity(loaded, range))
+      }
+    },
+    [initialGlobalOverrides],
+  )
 
   const loadDashboard = useCallback(async () => {
     if (!dashboardId) return
@@ -58,6 +92,8 @@ const DashboardDetail = () => {
     setError(null)
     try {
       const nextDashboard = await fetchDashboard(dashboardId)
+      // Batched with setDashboard: seeding after the tiles mounted made every tile query twice.
+      if (nextDashboard) seedGlobalControls(nextDashboard)
       setDashboard(nextDashboard)
     } catch (err) {
       console.error('fetchDashboard failed:', err)
@@ -66,7 +102,7 @@ const DashboardDetail = () => {
     } finally {
       setLoading(false)
     }
-  }, [dashboardId, fetchDashboard])
+  }, [dashboardId, fetchDashboard, seedGlobalControls])
 
   useEffect(() => {
     if (project) loadDashboard()
@@ -81,18 +117,7 @@ const DashboardDetail = () => {
     trackEvent('dashboard_viewed', { dashboardId: dashboard.id })
   }, [dashboard])
 
-  // Global time, granularity and filter controls, mirrored to the URL query string.
-  const initialGlobalOverrides = useMemo(() => readTimeGranularityQueryParams(), [])
-  const [globalTimeRange, setGlobalTimeRange] = useState<TimeRange | undefined>(() => initialGlobalOverrides.timeRange)
-  const [globalGranularity, setGlobalGranularity] = useState(() => {
-    if (initialGlobalOverrides.granularity !== undefined) return initialGlobalOverrides.granularity
-    return autoGranularity(initialGlobalOverrides.timeRange)
-  })
-
-  useEffect(() => {
-    writeTimeGranularityQueryParams({ timeRange: globalTimeRange, granularity: globalGranularity })
-  }, [globalGranularity, globalTimeRange])
-
+  // Global filters, mirrored to the URL query string.
   const [restoredFilters] = useState(() => {
     const { filters, dropped } = readPropFiltersParam()
     const violations = filters.map(filterViolation)
@@ -131,27 +156,8 @@ const DashboardDetail = () => {
     setGlobalFilters(next)
   }
 
-  // Seed the global range/granularity from the dashboard's saved default the first time it
-  // loads, but only when the user didn't arrive with an explicit range in the URL (a
-  // shared/bookmarked link wins), and only once per dashboard (so it never clobbers a pick
-  // made afterward, including after a save). With no saved default the controls stay empty
-  // and each tile falls back to its own range.
-  const seededDashboardIdRef = useRef<string | null>(null)
-  useEffect(() => {
-    if (!dashboard || seededDashboardIdRef.current === dashboard.id) return
-    seededDashboardIdRef.current = dashboard.id
-    if (initialGlobalOverrides.timeRange || !isDashboardTimeRangePreset(dashboard.defaultTimeRange)) return
-    const range = resolveDashboardTimeRangePreset(dashboard.defaultTimeRange)
-    setGlobalTimeRange(range)
-    // Keep a URL granularity if present; else honor the saved default granularity (clamped to
-    // the range's cap), else derive it from the range ("Auto").
-    if (initialGlobalOverrides.granularity === undefined) {
-      setGlobalGranularity(resolveDefaultGranularity(dashboard, range))
-    }
-  }, [dashboard, initialGlobalOverrides])
-
-  // Clearing the range restores the dashboard's saved default. The seed effect above only fires
-  // once per id, so without this tiles drop to the hardcoded 7-day fallback and never come back.
+  // Clearing the range restores the dashboard's saved default. The seed above only runs once
+  // per id, so without this tiles drop to the hardcoded 7-day fallback and never come back.
   const handleGlobalTimeRangeChange = useCallback(
     (range: TimeRange | undefined) => {
       if (!range && dashboard && isDashboardTimeRangePreset(dashboard.defaultTimeRange)) {

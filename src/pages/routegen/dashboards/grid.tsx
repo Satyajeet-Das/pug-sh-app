@@ -1,5 +1,6 @@
-import { type ReactNode, useEffect, useMemo, useRef } from 'react'
-import { type LayoutItem, Responsive, type ResponsiveLayouts, WidthProvider } from 'react-grid-layout/legacy'
+import { type ComponentProps, type ReactNode, useEffect, useMemo, useRef } from 'react'
+import { useContainerWidth } from 'react-grid-layout'
+import { type LayoutItem, Responsive, type ResponsiveLayouts } from 'react-grid-layout/legacy'
 import { type DashboardTile, DashboardTileViewMode } from '@/api/genproto/dashboard/dashboards/v1/dashboards_pb'
 import type { Granularity } from '@/api/genproto/shared/insights/v1/insights_pb'
 import type { TimeRange } from '@/components/date-range-picker'
@@ -14,7 +15,11 @@ import type { TileType } from './types'
 import 'react-grid-layout/css/styles.css'
 import './grid.css'
 
-const ResponsiveGridLayoutWithWidth = WidthProvider(Responsive)
+// Without measureBeforeMount the grid lays out at a default 1280px, then slides every tile to the real width.
+const ResponsiveGridLayoutWithWidth = (props: Omit<ComponentProps<typeof Responsive>, 'width'>) => {
+  const { width, containerRef, mounted } = useContainerWidth({ measureBeforeMount: true })
+  return <div ref={containerRef}>{mounted ? <Responsive {...props} width={width} /> : null}</div>
+}
 
 // The editor renders a familiar 12-column grid with fixed gutters while the API
 // continues to store positions in its existing 72-unit coordinate system.
