@@ -1,4 +1,5 @@
 import { create } from '@bufbuild/protobuf'
+import { timestampDate } from '@bufbuild/protobuf/wkt'
 import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { Provider } from 'jotai'
 import { toast } from 'sonner'
@@ -7,6 +8,7 @@ import { Route } from 'wouter'
 import { navigate } from 'wouter/use-browser-location'
 import { GetFilterSchemaResponseSchema, PropertySource } from '@/api/genproto/common/v1/filter_schema_pb'
 import { FilterOperator } from '@/api/genproto/common/v1/filters_pb'
+import { TimeRangePreset } from '@/api/genproto/common/v1/time_pb'
 import { type Dashboard, DashboardSchema } from '@/api/genproto/dashboard/dashboards/v1/dashboards_pb'
 import { InsightType, type QueryRequest, QueryResponseSchema } from '@/api/genproto/shared/insights/v1/insights_pb'
 import { createFilter } from '@/components/event-filters/filter-model'
@@ -53,6 +55,12 @@ const insightTile = (id: string, kind: string) => ({
 const dashboards: Record<string, Dashboard> = {
   d1: create(DashboardSchema, { id: 'd1', displayName: 'One', tiles: [insightTile('t1', 'signup')] }),
   d2: create(DashboardSchema, { id: 'd2', displayName: 'Two', tiles: [insightTile('t2', 'purchase')] }),
+  d3: create(DashboardSchema, {
+    id: 'd3',
+    displayName: 'Three',
+    defaultTimeRange: TimeRangePreset.LAST_30_DAYS,
+    tiles: [insightTile('t3', 'visit')],
+  }),
 }
 
 const tenant = createFilter('tenant', PropertySource.PROFILE, FilterOperator.IN, ['acme'])
@@ -63,6 +71,11 @@ const queriesFor = (kind: string) =>
   query.mock.calls
     .map(([request]) => request as QueryRequest)
     .filter(request => request.spec?.events[0]?.event?.kind === kind)
+
+const spanDays = ({ timeRange }: QueryRequest) =>
+  timeRange?.from && timeRange.to
+    ? (timestampDate(timeRange.to).getTime() - timestampDate(timeRange.from).getTime()) / 86_400_000
+    : 0
 
 const open = (url: string) => {
   window.history.replaceState(null, '', url)
@@ -142,5 +155,16 @@ describe('dashboard page filters', () => {
     act(() => navigate('/dashboards/d2'))
     await waitFor(() => expect(queriesFor('purchase').length).toBeGreaterThan(0))
     for (const request of queriesFor('purchase')) expect(filteredOn(request)).toEqual([])
+  })
+})
+
+describe('dashboard default range', () => {
+  it('queries each tile once, over the saved default range', async () => {
+    open('/dashboards/d3')
+    await waitFor(() => expect(queriesFor('visit').length).toBeGreaterThan(0))
+    await act(() => new Promise(resolve => setTimeout(resolve, 50)))
+    const requests = queriesFor('visit')
+    expect(requests).toHaveLength(1)
+    expect(spanDays(requests[0])).toBeGreaterThan(20)
   })
 })
