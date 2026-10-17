@@ -206,7 +206,7 @@ export const InsightTileView = ({
   // Single-series only: a dashed twin per split doubles a breakdown's lines with no way to tell
   // which pairs with which, and the two windows' splits need not match.
   const chartComparison = useMemo<ChartComparison | undefined>(() => {
-    if (!(comparePrior && compare) || 'error' in compare) return undefined
+    if (!(comparePrior && compare && 'series' in compare)) return undefined
     if (trendSeries.length !== 1 || chartData.length === 0) return undefined
     const values = alignComparisonValues(compare.series[0]?.points ?? [], chartData.length)
     const color = seriesColors[0]

@@ -1,5 +1,5 @@
 import { TrendingDown, TrendingUp } from 'lucide-react'
-import { useId, useMemo } from 'react'
+import { type ReactNode, useId, useMemo } from 'react'
 import type { DashboardTile } from '@/api/genproto/dashboard/dashboards/v1/dashboards_pb'
 import type { TrendSeries } from '@/api/genproto/shared/insights/v1/insights_pb'
 import { cn } from '@/lib/utils'
@@ -7,7 +7,10 @@ import { collapseValues, SERIES_COLLAPSE, type SeriesAggregationResolver } from 
 import { toneTextClass } from './accent-palette'
 import { evaluateThresholds } from './thresholds'
 
-export type KpiCompare = { series: TrendSeries[]; label: string } | { error: true; label: string }
+export type KpiCompare =
+  | { series: TrendSeries[]; label: string }
+  | { error: true; label: string }
+  | { pending: true; label: string }
 
 type KpiTileProps = {
   tile: DashboardTile
@@ -116,18 +119,25 @@ export const KpiTile = ({
   const sparkColor =
     prior === undefined || !Number.isFinite(prior) ? 'text-faint' : current >= prior ? 'text-positive' : 'text-negative'
 
-  const contextParts = [compare && 'series' in compare ? compare.label : null, metadata].filter(Boolean)
+  const contextParts = [compare && !('error' in compare) ? compare.label : null, metadata].filter(Boolean)
+
+  const deltaRow = (badge: ReactNode, className?: string) => (
+    <div className={cn('flex min-h-5 flex-wrap items-center gap-x-2 gap-y-1', className)}>
+      {badge}
+      {contextParts.length > 0 ? (
+        <span className="text-xs text-muted-foreground">{contextParts.join(' · ')}</span>
+      ) : null}
+    </div>
+  )
 
   const compareRow =
     compare && 'error' in compare ? (
       <div className="text-xs text-muted-foreground">Compare unavailable · {compare.label}</div>
-    ) : delta !== null && compare && 'series' in compare ? (
-      <div className="flex flex-wrap items-center gap-x-2 gap-y-1">
-        <DeltaBadge pct={delta.pct} label={delta.label} />
-        {contextParts.length > 0 ? (
-          <span className="text-xs text-muted-foreground">{contextParts.join(' · ')}</span>
-        ) : null}
-      </div>
+    ) : compare && 'pending' in compare ? (
+      // Holds the row's space while the comparison loads, so the tile doesn't grow when it lands.
+      deltaRow(<DeltaBadge pct={0} label="0.0%" />, 'invisible')
+    ) : compare && 'series' in compare ? (
+      deltaRow(delta && <DeltaBadge pct={delta.pct} label={delta.label} />)
     ) : contextParts.length > 0 ? (
       <span className="text-xs text-muted-foreground">{contextParts.join(' · ')}</span>
     ) : null
