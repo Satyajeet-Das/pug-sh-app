@@ -2,6 +2,7 @@ import { Component, type ReactNode, StrictMode } from 'react'
 import { createRoot } from 'react-dom/client'
 import App from './App.tsx'
 import { initAnalytics } from './analytics/pug'
+import { initSentry } from './analytics/sentry'
 import { TooltipProvider } from './components/ui/tooltip'
 import './index.css'
 
@@ -69,6 +70,9 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boole
   }
 }
 
+// Sentry first, so the root's handlers below exist before first render.
+const rootOptions = initSentry()
+
 // Outside React on purpose. init() fires the first page_view, so it wants one run in a fixed order:
 // after the storage guard above (the SDK persists identity in localStorage), and before render so
 // that page_view carries the entry URL. Module scope gives exactly that. init() is idempotent (it
@@ -77,7 +81,7 @@ class ErrorBoundary extends Component<{ children: ReactNode }, { hasError: boole
 // cleanup for StrictMode's remount to trip.
 initAnalytics()
 
-createRoot(document.getElementById('root')!).render(
+createRoot(document.getElementById('root')!, rootOptions).render(
   <StrictMode>
     <ErrorBoundary>
       <TooltipProvider>
