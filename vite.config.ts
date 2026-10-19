@@ -14,7 +14,7 @@ const PLATE_QUERY = `<style>
 
 const faviconFromLogo = (): Plugin => {
   const render = () => {
-    const logo = readFileSync(path.resolve(__dirname, 'public/logo.svg'), 'utf8')
+    const logo = readFileSync(path.resolve(import.meta.dirname, 'public/logo.svg'), 'utf8')
     const faviconSvg = logo.replace(/<rect\b[^>]*\bid="badge-plate"/, match => `${PLATE_QUERY}${match}`)
     // Fail loudly: a renamed id would otherwise ship a favicon that keeps the plate on light.
     if (faviconSvg === logo) throw new Error('logo.svg has no #badge-plate rect — favicon plate query would not apply')
@@ -44,7 +44,7 @@ export default defineConfig({
   },
   resolve: {
     alias: {
-      '@': path.resolve(__dirname, './src'),
+      '@': path.resolve(import.meta.dirname, './src'),
     },
   },
   build: {
