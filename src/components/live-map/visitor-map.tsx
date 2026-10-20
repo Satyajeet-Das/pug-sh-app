@@ -16,6 +16,7 @@ import {
 } from '@/components/live-map/markers'
 import { type Placement, type Rect, resolvePlacement } from '@/components/live-map/popover-placement'
 import { DECLUSTER_ZOOM, displayPos, scatterCellDeg } from '@/components/live-map/scatter'
+import { MapUnavailable } from '@/components/map-unavailable'
 import { themeRevisionAtom } from '@/data/theme.atoms'
 import { useMaplibreMap, useMapTheme } from '@/hooks/use-maplibre-map'
 import { INITIAL_VIEW_BOUNDS } from '@/lib/maplibre'
@@ -130,7 +131,7 @@ const LiveVisitorMap = ({
     [groups, declustered],
   )
 
-  const { containerRef, mapRef, ready } = useMaplibreMap({
+  const { containerRef, mapRef, ready, unavailable } = useMaplibreMap({
     style: buildBasemapStyle(mapTheme),
     // Applied before the style attaches, so the first tiles requested are already the framed ones.
     bounds: INITIAL_VIEW_BOUNDS,
@@ -614,6 +615,18 @@ const LiveVisitorMap = ({
       live.clear()
     }
   }, [])
+
+  // The popover too: with no map to project its subject, place() never moves it off the top-left
+  // corner, and a visitor picked from the panel would open one there. Not centred: the page's visitor
+  // panel grows up from the bottom-left to a cap of 100dvh - 9rem, which covered a centred note and
+  // only ever leaves a band of about 80px under the header. Compact is what fits in it.
+  if (unavailable) {
+    return (
+      <div className="absolute inset-0 z-0 h-full w-full">
+        <MapUnavailable compact className="justify-start pt-6" />
+      </div>
+    )
+  }
 
   return (
     <div className="absolute inset-0 z-0 h-full w-full">
