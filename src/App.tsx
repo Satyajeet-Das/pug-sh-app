@@ -7,6 +7,7 @@ import AnalyticsIdentity from '@/analytics/identity'
 import { isAuthenticatedAtom } from '@/auth/auth.atoms'
 import { AuthSplit } from '@/auth/auth-split'
 import { AuthPending, AuthStatus } from '@/auth/auth-status'
+import { isDemoHost } from '@/auth/demo'
 import { customerIdAtom } from '@/auth/jwt.atoms'
 import UsageBanner from '@/components/billing/usage-banner'
 import { DemoBanner } from '@/components/demo-banner'
@@ -184,18 +185,14 @@ export const WorkspaceBootstrap = () => {
     }
   }, [authenticated, status, setStatus, resetWorkspace, setJoinedOrgIds])
 
-  // The one place an account switch tears the workspace down, in-tab and cross-tab alike. The JWT
-  // syncs across tabs (atomWithStorage listens for storage events); the workspace does not. Sign in
-  // as someone else in another tab and this one keeps the previous account's org and project while
-  // every request it sends now carries the new account's token, including the visit it records,
-  // which would file one account's project under the other's stamp and undo the whole point of
-  // stamping them. Rebuild instead.
+  // Another tab's sign-in syncs the JWT here but not the workspace, so rebuild it. Skips an idle workspace:
+  // applySessionAtom has just reset it, and a second reset would cancel the restart.
   const knownCustomer = useRef(customerId)
   useEffect(() => {
     const switched = knownCustomer.current && customerId && knownCustomer.current !== customerId
     knownCustomer.current = customerId
-    if (switched) resetWorkspace()
-  }, [customerId, resetWorkspace])
+    if (switched && status !== 'idle') resetWorkspace()
+  }, [customerId, status, resetWorkspace])
 
   useEffect(() => {
     if (status !== 'loading-org') return
@@ -412,9 +409,10 @@ const App = () => {
     if (isMagicLink) return <MagicLink />
     if (isOAuthCallback) return <OAuthCallback />
     // Before the !authenticated branch on purpose: an already-signed-in user must still reach
-    // <Demo />'s confirm step (entering the demo signs them out), not be routed past it.
+    // <Demo />, which hands off or asks before signing them out, not be routed past it.
     if (isDemoRoute) return <Demo />
-    if (!authenticated) return <SignIn />
+    // The demo's own origin has no sign-in: everyone there is the demo viewer.
+    if (!authenticated) return isDemoHost() ? <Demo /> : <SignIn />
     if (failed) return <WorkspaceError message={workspaceError ?? 'Please try again.'} />
     if (status === 'needs-selection') return <SelectOrg />
     return <AuthPending label="Loading your workspace…" />

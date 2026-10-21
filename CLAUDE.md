@@ -488,6 +488,16 @@ Current manual events beyond `feature_used`: `signin` (`method`), `signout`, `ap
 - **The refusals are mapped on the code, like OAuth's, but only on an error that carries a detail.** On these two RPCs only the check answers `PermissionDenied` (`TURNSTILE_FAILED`) or `Unavailable` (`TURNSTILE_UNAVAILABLE`), but Connect turns a proxy's bare 403 or 429/502/503/504 into the same codes. The server's own refusal always carries an `ErrorInfo` detail, and a status-derived error never does. A `PermissionDenied` fetches the config again. That covers a page opened before the keys were set or rotated, and a failed first fetch.
 - **The widget is `interaction-only`**, an empty box until Cloudflare wants a click, and an empty box adds no gap to the form's `space-y` stack. Cloudflare's test site keys work on localhost with the dummy secrets in the backend's `.env.example`, since a real secret refuses their tokens: `1x00000000000000000000AA` always passes, `3x00000000000000000000FF` forces the click.
 
+### Demo
+
+The read-only demo signs everyone in as one shared viewer (`demoSignInAtom`). Where it lives decides what entering it costs a signed-in visitor.
+
+- **On its own origin (demo.pug.sh), nothing.** One build serves both origins once `VITE_DEMO_ORIGIN` and `VITE_APP_ORIGIN` are two different http(s) origins (anything else leaves it off and warns in the console), and `isDemoHost()` (`auth/demo.ts`) tells them apart. localStorage is per origin, so a demo session there can never replace a real one. That origin has no sign-in: a signed-out visitor gets a demo session on whatever page they opened, "Sign up free" links to the app's origin, and the demo viewer gets no Sign out, since it would only start the demo again. A dead demo session re-mints there, so the transport skips its "sign in again" toast. The demo's origin has to be in the backend's `PUG_CORS_ORIGINS` before the variables are set.
+- **The app's `/demo` then only hands off to it**, query included (campaign tags), and never touches the session. It stays because marketing links point at it.
+- **With either variable unset, `/demo` mints in place**, after a confirm step that warns a signed-in visitor they'll be signed out. That is an in-tab account switch, which is why `applySessionAtom` resets the workspace in the same pass as the token: `/demo`, `/magic-link` and `/oauth/callback` navigate into the app in the same tick, and a workspace still standing then has `ProjectRedirect` send the new account to the old one's project ("Project not found"). `WorkspaceBootstrap`'s switch effect is for another tab's sign-in, and skips a workspace that is already idle, since a second reset would cancel the bootstrap the first one restarted.
+
+`App.test.tsx` "the demo" has a test for each bullet; `auth/demo.test.ts` covers the variables.
+
 ### Filters & Query Semantics
 
 - Shared insights proto now uses grouped global filters:
