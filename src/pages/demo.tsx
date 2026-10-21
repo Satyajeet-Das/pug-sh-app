@@ -4,19 +4,19 @@ import { useEffect, useRef, useState } from 'react'
 import { useLocation } from 'wouter'
 import { demoSignInAtom, isAuthenticatedAtom } from '@/auth/auth.atoms'
 import { AuthPending, AuthStatus } from '@/auth/auth-status'
-import { isDemoSessionAtom } from '@/auth/demo'
+import { demoHandoffUrl, isDemoHost, isDemoSessionAtom } from '@/auth/demo'
 import { Button } from '@/components/ui/button'
 
-// Public entry for the read-only demo viewer. A logged-out visitor is signed in automatically; a
-// visitor already in the demo drops straight into the app; a visitor signed in to their own account
-// is asked to confirm first, since entering the demo replaces (signs out) their real session.
+// Hands the app's /demo off to the demo's own origin when there is one; otherwise signs in as the demo
+// viewer here, asking first when that would replace a real session.
 const Demo = () => {
-  const [, navigate] = useLocation()
+  const [location, navigate] = useLocation()
   const authenticated = useAtomValue(isAuthenticatedAtom)
   const isDemo = useAtomValue(isDemoSessionAtom)
   const demoSignIn = useSetAtom(demoSignInAtom)
   const [error, setError] = useState('')
   const [switching, setSwitching] = useState(false)
+  const handoff = demoHandoffUrl()
   // One-shot guard: blocks StrictMode's double-invoked effect, and stops the effect from re-running
   // (re-navigating) once a successful sign-in flips `authenticated`/`isDemo` (the confirm path sets
   // it before minting, for the same reason).
@@ -24,28 +24,34 @@ const Demo = () => {
 
   useEffect(() => {
     if (startedRef.current) return
-    // Already in the demo (reload or revisit) — drop straight into the app, no re-mint.
+    if (handoff) {
+      startedRef.current = true
+      window.location.replace(handoff)
+      return
+    }
+    // Already in the demo (reload or revisit): drop straight into the app, no re-mint.
     if (authenticated && isDemo) {
       startedRef.current = true
       navigate('/overview')
       return
     }
-    // Logged-out visitor — mint the demo viewer session automatically.
+    // Logged-out visitor: mint the demo viewer session automatically.
     if (!authenticated) {
       startedRef.current = true
       ;(async () => {
         const res = await demoSignIn()
-        if (res.ok) navigate('/overview')
-        else setError(res.error)
+        if (!res.ok) setError(res.error)
+        // The demo's own origin renders this on any page a signed-out visitor opens, and keeps them on it.
+        else if (location === '/demo') navigate('/overview')
       })()
     }
-    // Authenticated as a real user — do nothing here; the confirm interstitial below handles it so
+    // Authenticated as a real user: do nothing here; the confirm interstitial below handles it so
     // we never silently replace their session.
-  }, [authenticated, isDemo, demoSignIn, navigate])
+  }, [handoff, authenticated, isDemo, demoSignIn, location, navigate])
 
   // Real user explicitly chose the demo: mint it in place of their account. demoSignIn writes the
   // new token pair through applySessionAtom, whose identity-switch detection clears the prior user's
-  // workspace — so the demo replaces their session only on success. If it fails (e.g. the server
+  // workspace, so the demo replaces their session only on success. If it fails (e.g. the server
   // demo is off), their real session is left untouched; the error view's back link returns them to it.
   const confirmSwitch = async () => {
     startedRef.current = true
@@ -59,21 +65,30 @@ const Demo = () => {
     }
   }
 
+  if (handoff) return <AuthPending label="Starting the demo…" />
+
   if (error) {
+    let action = authenticated ? 'Back to my dashboard' : 'Back to sign in'
+    let onAction = () => navigate(authenticated ? '/overview' : '/')
+    // The demo's own origin has no sign-in to go back to.
+    if (isDemoHost()) {
+      action = 'Try again'
+      onAction = () => window.location.reload()
+    }
     return (
       <AuthStatus icon={AlertCircle} tone="negative" title="Demo unavailable" description={error}>
         <button
           type="button"
-          onClick={() => navigate(authenticated ? '/overview' : '/')}
+          onClick={onAction}
           className="mt-6 text-sm font-medium text-link underline-offset-4 hover:underline"
         >
-          {authenticated ? 'Back to my dashboard' : 'Back to sign in'}
+          {action}
         </button>
       </AuthStatus>
     )
   }
 
-  // Real user signed in to their own account — confirm before replacing their session.
+  // Real user signed in to their own account: confirm before replacing their session.
   if (authenticated && !isDemo) {
     return (
       <AuthStatus

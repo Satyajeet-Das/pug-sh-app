@@ -1,20 +1,21 @@
 import { create } from '@bufbuild/protobuf'
 import { Code, ConnectError } from '@connectrpc/connect'
-import { act, render, screen, waitFor } from '@testing-library/react'
+import { act, fireEvent, render, screen, waitFor } from '@testing-library/react'
 import { createStore, Provider } from 'jotai'
 import { toast } from 'sonner'
-import { beforeEach, describe, expect, it, vi } from 'vitest'
+import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest'
 import { Route, Router, Switch } from 'wouter'
 import { memoryLocation } from 'wouter/memory-location'
 import { OrgSchema } from '@/api/genproto/dashboard/orgs/v1/orgs_pb'
 import { ProjectSchema } from '@/api/genproto/dashboard/projects/v1/projects_pb'
 import { jwtFor } from '@/test/jwt'
 
-const { batchGet, orgsList, orgsGet, orgsUpdateDisplayName } = vi.hoisted(() => ({
+const { batchGet, orgsList, orgsGet, orgsUpdateDisplayName, demoSignIn } = vi.hoisted(() => ({
   batchGet: vi.fn(),
   orgsList: vi.fn(),
   orgsGet: vi.fn(),
   orgsUpdateDisplayName: vi.fn(),
+  demoSignIn: vi.fn(),
 }))
 
 vi.mock('@/api/rpc', async () => {
@@ -22,6 +23,7 @@ vi.mock('@/api/rpc', async () => {
   return {
     projectsRPCAtom: atom({ batchGet }),
     orgsRPCAtom: atom({ list: orgsList, get: orgsGet, updateDisplayName: orgsUpdateDisplayName }),
+    authRPCAtom: atom({ demoSignIn }),
     // The over-quota banner reads both; unresolved, it stays unrendered.
     billingRPCAtom: atom({ getBillingStatus: vi.fn(() => new Promise(() => {})) }),
     usageRPCAtom: atom({ getUsage: vi.fn(() => new Promise(() => {})) }),
@@ -32,6 +34,7 @@ vi.mock('@/api/rpc', async () => {
 
 // A signed-in App preloads its landing page, and the real overview's ~2s import times these out under load.
 vi.mock('@/pages/routegen/overview/index.page', () => ({ default: () => null }))
+vi.mock('@/pages/routegen/live/index.page', () => ({ default: () => <div>live page</div> }))
 
 // Identity reports the settled workspace to Pug. It's mounted by App, not by the component under
 // test, but auth.atoms pulls the analytics module in regardless. Stub the ingest so no test ever
@@ -61,7 +64,7 @@ const {
   selectOrgAtom,
   workspaceErrorAtom,
 } = await import('@/data/workspace.atoms')
-const { jwtAtom, refreshTokenAtom } = await import('@/auth/jwt.atoms')
+const { customerIdAtom, jwtAtom, refreshTokenAtom } = await import('@/auth/jwt.atoms')
 const { SidebarProvider } = await import('@/components/ui/sidebar')
 const AppSidebar = (await import('@/components/layout/sidebar')).default
 
@@ -236,8 +239,8 @@ describe('dropping the project URL when a session ends', () => {
   })
 
   it('leaves a non-project URL alone', async () => {
-    // /demo signs an existing session out to enter the demo; it has no project URL to drop, and
-    // rewriting it would bounce the user out of the confirm step.
+    // In place, /demo signs an existing session out to enter the demo; it has no project URL to drop,
+    // and rewriting it would bounce the user out of the confirm step.
     const { store, history } = mountGuard('/demo')
 
     // Inside act, or the effect this is asserting about hasn't run yet and the assertion holds no
@@ -417,8 +420,6 @@ describe('restoring the last org', () => {
   }
 
   beforeEach(() => {
-    // Earlier describes leave calls on batchGet, and restoreMocks doesn't touch a vi.fn().
-    batchGet.mockClear()
     batchGet.mockResolvedValue({ projects })
   })
 
@@ -923,5 +924,119 @@ describe('a restored session on the bare app URL', () => {
 
     await waitFor(() => expect(history.at(-1)).toBe('/p/p2/overview'))
     expect(await screen.findByText('Second')).toBeTruthy()
+  })
+})
+
+describe('the demo', () => {
+  const demoOrg = create(OrgSchema, { id: 'org-demo', displayName: 'Demo' })
+  const demoProject = create(ProjectSchema, { id: 'p-demo', displayName: 'Demo project' })
+
+  beforeEach(() => {
+    orgsGet.mockResolvedValue({ org: orgA })
+    orgsList.mockResolvedValue({ orgs: [demoOrg] })
+    batchGet.mockImplementation(({ orgId }: { orgId: string }) =>
+      Promise.resolve({ projects: orgId === demoOrg.id ? [demoProject] : projects }),
+    )
+    demoSignIn.mockResolvedValue({ token: jwtFor('cust-demo'), refreshToken: 'demo-refresh' })
+    // In place unless a test says otherwise, whatever a local .env sets: tests read it too.
+    vi.stubEnv('VITE_DEMO_ORIGIN', '')
+    vi.stubEnv('VITE_APP_ORIGIN', '')
+  })
+
+  afterEach(() => {
+    vi.unstubAllEnvs()
+    window.history.replaceState(null, '', '/')
+  })
+
+  const mountApp = (path: string, { signedIn = true } = {}) => {
+    const store = createStore()
+    if (signedIn) {
+      store.set(refreshTokenAtom, 'refresh-token')
+      store.set(jwtAtom, jwtFor('cust-1'))
+      store.set(lastOrgIdAtom, 'org-a')
+    }
+    const { hook, history, navigate } = memoryLocation({ path, record: true })
+    render(
+      <Provider store={store}>
+        <Router hook={hook}>
+          <App />
+        </Router>
+      </Provider>,
+    )
+    return { store, history, navigate }
+  }
+
+  const onDemoHost = () => {
+    vi.stubEnv('VITE_DEMO_ORIGIN', window.location.origin)
+    vi.stubEnv('VITE_APP_ORIGIN', 'https://app.example')
+  }
+
+  // Through the real App: /demo navigates into it in the same tick the token changes hands.
+  it("lands a signed-in visitor who enters it on the demo's project, not their own", async () => {
+    const { history, navigate } = mountApp('/')
+    // Only a rendered router takes '/' on to the project, and the race needs one in place.
+    await waitFor(() => expect(history.at(-1)).toBe('/p/p1/overview'))
+    act(() => navigate('/demo'))
+    fireEvent.click(await screen.findByRole('button', { name: 'View read-only demo' }))
+
+    await waitFor(() => expect(history.at(-1)).toBe('/p/p-demo/overview'))
+  })
+
+  for (const [visitor, signedIn, customer] of [
+    ['a signed-in visitor, leaving their session alone', true, 'cust-1'],
+    ['a signed-out one, minting nothing here', false, undefined],
+  ] as const) {
+    it(`hands /demo off to its own origin, query included, for ${visitor}`, async () => {
+      vi.stubEnv('VITE_DEMO_ORIGIN', 'https://demo.example')
+      vi.stubEnv('VITE_APP_ORIGIN', window.location.origin)
+      window.history.replaceState(null, '', '/demo?utm_source=launch')
+      const replace = vi.spyOn(window.location, 'replace').mockImplementation(() => {})
+      const { store } = mountApp('/demo', { signedIn })
+
+      await waitFor(() => expect(replace).toHaveBeenCalledWith('https://demo.example/?utm_source=launch'))
+      expect(demoSignIn).not.toHaveBeenCalled()
+      expect(store.get(customerIdAtom)).toBe(customer)
+    })
+  }
+
+  it('signs a visitor straight in on its own origin, and sends sign-ups to the app', async () => {
+    onDemoHost()
+    const { history } = mountApp('/', { signedIn: false })
+
+    await waitFor(() => expect(history.at(-1)).toBe('/p/p-demo/overview'))
+    expect(screen.getByRole('link', { name: 'Sign up free →' }).getAttribute('href')).toBe('https://app.example')
+  })
+
+  it('keeps a visitor on the page they opened on its own origin', async () => {
+    onDemoHost()
+    const { history } = mountApp('/p/p-demo/live', { signedIn: false })
+
+    expect(await screen.findByText('live page', {}, { timeout: 5000 })).toBeTruthy()
+    expect(history.at(-1)).toBe('/p/p-demo/live')
+  })
+
+  it('hides Sign out from the demo viewer on its own origin', async () => {
+    onDemoHost()
+    mountApp('/', { signedIn: false })
+
+    await screen.findByRole('button', { name: /^(light|dark|system)$/i }, { timeout: 5000 })
+    expect(screen.queryByRole('button', { name: 'Sign out' })).toBeNull()
+  })
+
+  it('still offers Sign out to a real account on that origin', async () => {
+    onDemoHost()
+    mountApp('/')
+
+    expect(await screen.findByRole('button', { name: 'Sign out' })).toBeTruthy()
+  })
+
+  it('offers a retry, not a sign-in, when the demo is down on its own origin', async () => {
+    onDemoHost()
+    demoSignIn.mockRejectedValue(new ConnectError('demo off', Code.Unavailable))
+    const reload = vi.spyOn(window.location, 'reload').mockImplementation(() => {})
+    mountApp('/', { signedIn: false })
+
+    fireEvent.click(await screen.findByRole('button', { name: 'Try again' }))
+    expect(reload).toHaveBeenCalled()
   })
 })
