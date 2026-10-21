@@ -90,7 +90,10 @@ export const filterValueLabel = (filter: ActiveFilter) => {
 }
 
 export const filterValueNamed = (filter: ActiveFilter) => {
-  if (filter.kind === 'multi') return filter.values.some(value => propertyValueLabel(filter.property, value) !== value)
+  if (filter.kind === 'multi')
+    return (
+      filter.values.length > 0 && filter.values.every(value => propertyValueLabel(filter.property, value) !== value)
+    )
   if (filter.kind === 'single') return propertyValueLabel(filter.property, filter.value) !== filter.value
   return false
 }

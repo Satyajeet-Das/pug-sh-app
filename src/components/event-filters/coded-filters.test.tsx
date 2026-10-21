@@ -89,6 +89,11 @@ describe('FilterChip on $country', () => {
     expect(onUpdate).toHaveBeenCalledWith(expect.objectContaining({ values: ['IN', 'US', 'DE'] }))
   })
 
+  it('shows a list as stored unless every value is named', () => {
+    chip(country(FilterOperator.IN, ['IN', 'Narnia']))
+    expect(trigger('India, Narnia').className).toContain('font-mono')
+  })
+
   it('edits a single filter by name and stores the code', async () => {
     const onUpdate = chip(country(FilterOperator.EQUALS, 'IN'))
     expect(trigger('India').className).not.toContain('font-mono')
