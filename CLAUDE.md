@@ -503,6 +503,7 @@ Current manual events beyond `feature_used`: `signin` (`method`), `signout`, `ap
   - Always allow free text for values (suggestions are optional, not required).
   - Multi-value operators (`in`, `not in`) support manual multi-entry via Enter/comma + Add. `contains` / `not contains` are single-value (substring match): the backend's `PropertyFilter` CEL constraints require a non-empty `value` and forbid `values` for them, so they are not list-arity.
   - Presence operators (`is set`, `is not set`) are no-value operators and should commit immediately.
+  - **Coded values are stored as codes and shown as names.** `$country` (ISO alpha-2), `$continent` and `$locale` go through `lib/property-values.ts` in the value picker, filter chips, breakdown legends, top-K rows and user-flow nodes. For `$country` and `$continent`, typed text resolves to the code by code, name or alias, ignoring case and accents, because the backend matches exactly. `$locale` has no closed set: a tag is named only when canonical (ingest canonicalizes it), and the single-value input shows the tag, since a name can't be typed back into one. A value with no name renders in mono, so unresolved text never reads like a code that matched. The picker lists every country below the ones seen recently; that list copies the backend's `geo.countryCodes`, so change both together.
 
 ### TypeScript Style
 
