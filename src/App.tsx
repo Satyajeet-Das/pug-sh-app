@@ -108,25 +108,18 @@ const FetchedThemeSync = () => {
 // Preloads what a signed-in load shows first while the workspace boots, not after it. Reads the address
 // bar rather than the router's location, which would rerun this on every navigation.
 const LandingPreload = () => {
-  const { parser } = useRouter()
-
   const authenticated = useAtomValue(isAuthenticatedAtom)
+  const { parser } = useRouter()
   const prefetchOverviewSchema = useSetAtom(prefetchOverviewSchemaAtom)
-
   useEffect(() => {
     if (!authenticated) return
-
     const { pathname } = window.location
-
     void AppSidebar.preload()
     void Router.preload()
-
     const landing = landingRoute(parser, pathname)
     void routes[landing].component.preload()
-
     if (landing === OVERVIEW_ROUTE) prefetchOverviewSchema(projectIdOf(pathname))
   }, [authenticated, parser, prefetchOverviewSchema])
-
   return null
 }
 
