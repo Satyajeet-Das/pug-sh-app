@@ -2,8 +2,8 @@ import { useAtomValue, useSetAtom } from 'jotai'
 import { signOutAtom } from '@/auth/auth.atoms'
 import { appOrigin, isDemoHost, isDemoSessionAtom } from '@/auth/demo'
 
-// Shown only in a demo session. Its CTA signs out to the sign-in page (which doubles as sign-up), or on
-// the demo's own origin links to the app's.
+// Shown only in a demo session. Its CTA links to the app's origin, or signs out to the sign-in page (which doubles as
+// sign-up) in a demo session the app's origin still holds from before the demo had its own.
 export const DemoBanner = () => {
   const isDemo = useAtomValue(isDemoSessionAtom)
   const signOut = useSetAtom(signOutAtom)

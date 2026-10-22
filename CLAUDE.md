@@ -478,6 +478,7 @@ Current manual events beyond `feature_used`: `signin` (`method`), `signout`, `ap
 - Dashboard endpoints need JWT (handled by interceptor)
 - Project-scoped endpoints need JWT + `x-project-id` header
 - SDK endpoints (devices, events, profiles) use API key auth; not called from this frontend
+- An in-tab sign-in can switch accounts (a signed-in visitor opening another account's magic link), which is why `applySessionAtom` resets the workspace in the same pass as the token: `/magic-link` and `/oauth/callback` navigate into the app in the same tick, and a workspace still standing then has `ProjectRedirect` send the new account to the old one's project ("Project not found"). `WorkspaceBootstrap`'s switch effect is for another tab's sign-in, and skips a workspace that is already idle, since a second reset would cancel the bootstrap the first one restarted. `App.test.tsx` "signing in as someone else in this tab" guards it.
 
 ### Turnstile
 
@@ -490,11 +491,11 @@ Current manual events beyond `feature_used`: `signin` (`method`), `signout`, `ap
 
 ### Demo
 
-The read-only demo signs everyone in as one shared viewer (`demoSignInAtom`). Where it lives decides what entering it costs a signed-in visitor.
+The read-only demo signs everyone in as one shared viewer (`demoSignInAtom`), and runs only on its own origin (demo.pug.sh), so entering it never costs a signed-in visitor their session.
 
-- **On its own origin (demo.pug.sh), nothing.** One build serves both origins once `VITE_DEMO_ORIGIN` and `VITE_APP_ORIGIN` are two different http(s) origins (anything else leaves it off and warns in the console), and `isDemoHost()` (`auth/demo.ts`) tells them apart. localStorage is per origin, so a demo session there can never replace a real one. That origin has no sign-in: a signed-out visitor gets a demo session on whatever page they opened, "Sign up free" links to the app's origin, and the demo viewer gets no Sign out, since it would only start the demo again. A dead demo session re-mints there, so the transport skips its "sign in again" toast. The demo's origin has to be in the backend's `PUG_CORS_ORIGINS` before the variables are set.
-- **The app's `/demo` then only hands off to it**, query included (campaign tags), and never touches the session. It stays because marketing links point at it.
-- **With either variable unset, `/demo` mints in place**, after a confirm step that warns a signed-in visitor they'll be signed out. That is an in-tab account switch, which is why `applySessionAtom` resets the workspace in the same pass as the token: `/demo`, `/magic-link` and `/oauth/callback` navigate into the app in the same tick, and a workspace still standing then has `ProjectRedirect` send the new account to the old one's project ("Project not found"). `WorkspaceBootstrap`'s switch effect is for another tab's sign-in, and skips a workspace that is already idle, since a second reset would cancel the bootstrap the first one restarted.
+- **One build serves both origins** once `VITE_DEMO_ORIGIN` and `VITE_APP_ORIGIN` are two different http(s) origins (otherwise the demo is off, with a console warning once either one or `VITE_DEMO_ENABLED` is set), and `isDemoHost()` (`auth/demo.ts`) tells them apart. localStorage is per origin, so a demo session on the demo's origin can never replace a real one. The demo's origin has no sign-in: a signed-out visitor gets a demo session on whatever page they opened, "Sign up free" links to the app's origin, and the demo viewer gets no Sign out, since it would only start the demo again. A dead demo session re-mints there, so the transport skips its "sign in again" toast. The demo's origin has to be in the backend's `PUG_CORS_ORIGINS` before the variables are set.
+- **The app's `/demo` only hands off to it**, query included (campaign tags), and never touches the session. It stays because marketing links point at it. A load of it leaves from `main.tsx` before React mounts: a session's first requests can refresh its token, and leaving mid-refresh strands the old one, which the backend reads as reuse and revokes the session. App's own hand-off only serves the sign-in page's link. Anywhere else `/demo` is an ordinary path, so with either variable unset there is no demo at all (locally, `http://demo.localhost:5173` serves as the demo's origin), and the sign-in page's `VITE_DEMO_ENABLED` link stays hidden.
+- **The app's origin still holds demo sessions minted before the split** (2026-10-22). A refresh token slides for 90 days, so there the banner's "Sign up free" still signs out to the sign-in page.
 
 `App.test.tsx` "the demo" has a test for each bullet; `auth/demo.test.ts` covers the variables.
 
