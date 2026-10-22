@@ -62,7 +62,9 @@ const OptionLabel = ({ property, option }: { property: string; option: ValueOpti
     <>
       {property === COUNTRY_PROPERTY && <CountryFlag code={option.value} />}
       <span className="flex-1 truncate">{option.label}</span>
-      <span className="shrink-0 font-mono text-faint">{option.value}</span>
+      <span data-slot="command-shortcut" className="shrink-0 font-mono text-faint">
+        {option.value}
+      </span>
     </>
   )
 }
