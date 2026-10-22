@@ -159,7 +159,9 @@ const EventPopoverList = ({
                   style={{ backgroundColor: customColor ?? colors.dot }}
                 />
                 <span className="flex-1 truncate">{ev.name}</span>
-                <span data-slot="command-shortcut" className="text-xs text-faint tabular-nums shrink-0">{compactNumber(ev.count)}</span>
+                <span data-slot="command-shortcut" className="text-xs text-faint tabular-nums shrink-0">
+                  {compactNumber(ev.count)}
+                </span>
               </CommandItem>
             )
           })}
