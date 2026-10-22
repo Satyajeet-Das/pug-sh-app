@@ -65,10 +65,10 @@ export const PropertyPickerList = ({
                 {selected && (
                   <Check className={cn('w-3 h-3 shrink-0', selected.has(pk.name) ? 'opacity-100' : 'opacity-0')} />
                 )}
-                <div className="flex items-center space-between w-full">
-                  <span className="font-mono text-muted-foreground truncate">{pk.name}</span>
-                  <span className="ml-auto text-xs text-faint tabular-nums shrink-0">{compactNumber(pk.count)}</span>
-                </div>
+                <span className="font-mono text-muted-foreground truncate">{pk.name}</span>
+                <span data-slot="command-shortcut" className="ml-auto text-xs text-faint tabular-nums shrink-0">
+                  {compactNumber(pk.count)}
+                </span>
               </CommandItem>
             ))}
           </CommandGroup>
@@ -85,10 +85,10 @@ export const PropertyPickerList = ({
                 {selected && (
                   <Check className={cn('w-3 h-3 shrink-0', selected.has(pk.name) ? 'opacity-100' : 'opacity-0')} />
                 )}
-                <div className="flex items-center space-between w-full">
-                  <span className="truncate">{pk.name}</span>
-                  <span className="ml-auto text-xs text-faint tabular-nums shrink-0">{compactNumber(pk.count)}</span>
-                </div>
+                <span className="truncate">{pk.name}</span>
+                <span data-slot="command-shortcut" className="ml-auto text-xs text-faint tabular-nums shrink-0">
+                  {compactNumber(pk.count)}
+                </span>
               </CommandItem>
             ))}
           </CommandGroup>
