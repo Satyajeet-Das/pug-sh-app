@@ -7,7 +7,7 @@ import AnalyticsIdentity from '@/analytics/identity'
 import { isAuthenticatedAtom } from '@/auth/auth.atoms'
 import { AuthSplit } from '@/auth/auth-split'
 import { AuthPending, AuthStatus } from '@/auth/auth-status'
-import { isDemoHost } from '@/auth/demo'
+import { demoHandoffUrl, isDemoHost } from '@/auth/demo'
 import { customerIdAtom } from '@/auth/jwt.atoms'
 import UsageBanner from '@/components/billing/usage-banner'
 import { DemoBanner } from '@/components/demo-banner'
@@ -380,7 +380,7 @@ const App = () => {
   const isSharedRoute = location.startsWith('/shared/')
   const isMagicLink = location === '/magic-link'
   const isOAuthCallback = location === '/oauth/callback' || location.startsWith('/oauth/callback/')
-  const isDemoRoute = location === '/demo'
+  const isDemoHandoff = location === '/demo' && demoHandoffUrl() !== null
   const failed = !!workspaceError || status === 'error'
 
   // A screen that is unambiguously part of the signed-out flow. Bootstrap is excluded: it is the
@@ -388,7 +388,7 @@ const App = () => {
   // restored session into the dashboard.
   const onAuthScreen =
     !isSharedRoute &&
-    (isMagicLink || isOAuthCallback || isDemoRoute || !authenticated || failed || status === 'needs-selection')
+    (isMagicLink || isOAuthCallback || isDemoHandoff || !authenticated || failed || status === 'needs-selection')
 
   // Which of the two bootstraps this is, latched from whether an auth screen came first. A
   // restored session never shows one, so it boots on the plain spinner and never flashes the wall.
@@ -408,9 +408,7 @@ const App = () => {
   const authScreen = () => {
     if (isMagicLink) return <MagicLink />
     if (isOAuthCallback) return <OAuthCallback />
-    // Before the !authenticated branch on purpose: an already-signed-in user must still reach
-    // <Demo />, which hands off or asks before signing them out, not be routed past it.
-    if (isDemoRoute) return <Demo />
+    if (isDemoHandoff) return <Demo />
     // The demo's own origin has no sign-in: everyone there is the demo viewer.
     if (!authenticated) return isDemoHost() ? <Demo /> : <SignIn />
     if (failed) return <WorkspaceError message={workspaceError ?? 'Please try again.'} />

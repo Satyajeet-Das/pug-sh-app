@@ -314,14 +314,12 @@ export const demoSignInAtom = atom(null, async (get, set): Promise<AuthResult> =
     set(applySessionAtom, { token: resp.token, refreshToken: resp.refreshToken, method: 'demo' })
     return { ok: true }
   } catch (error) {
-    // Unavailable = PUG_DEMO_ENABLED off or the demo account isn't seeded: expected, not a bug, so
-    // don't log it. Anything else (Internal, PermissionDenied, ResourceExhausted, or a non-Connect
-    // JS error) is unexpected; log it before the generic copy, or a "demo is down" incident leaves
-    // no frontend trace at all.
+    // Unavailable is the server's demo switch (PUG_DEMO_ENABLED off, or no demo account), but a proxy's 502/503
+    // arrives as that code too, so every failure is logged.
+    console.error('demoSignIn failed', connectDetail(error))
     if (error instanceof ConnectError && error.code === Code.Unavailable) {
       return { ok: false, error: "The live demo isn't available right now." }
     }
-    console.error('demoSignIn failed', connectDetail(error))
     return { ok: false, error: 'Could not start the demo. Please try again.' }
   }
 })

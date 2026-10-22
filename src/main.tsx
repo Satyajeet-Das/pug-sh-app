@@ -3,6 +3,7 @@ import { createRoot } from 'react-dom/client'
 import App from './App.tsx'
 import { initAnalytics } from './analytics/pug'
 import { initSentry } from './analytics/sentry'
+import { demoHandoffUrl } from './auth/demo'
 import { TooltipProvider } from './components/ui/tooltip'
 import './index.css'
 
@@ -81,12 +82,19 @@ const rootOptions = initSentry()
 // cleanup for StrictMode's remount to trip.
 initAnalytics()
 
-createRoot(document.getElementById('root')!, rootOptions).render(
-  <StrictMode>
-    <ErrorBoundary>
-      <TooltipProvider>
-        <App />
-      </TooltipProvider>
-    </ErrorBoundary>
-  </StrictMode>,
-)
+// Before React mounts: a session's first requests can refresh its token, and leaving mid-refresh strands the old one,
+// which the backend then reads as reuse and revokes the whole session.
+const demoHandoff = window.location.pathname === '/demo' ? demoHandoffUrl() : null
+if (demoHandoff) {
+  window.location.replace(demoHandoff)
+} else {
+  createRoot(document.getElementById('root')!, rootOptions).render(
+    <StrictMode>
+      <ErrorBoundary>
+        <TooltipProvider>
+          <App />
+        </TooltipProvider>
+      </ErrorBoundary>
+    </StrictMode>,
+  )
+}

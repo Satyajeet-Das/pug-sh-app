@@ -1,5 +1,5 @@
 import { afterEach, describe, expect, it, vi } from 'vitest'
-import { appOrigin, demoHandoffUrl, isDemoHost } from './demo'
+import { appOrigin, demoHandoffUrl, isDemoEnabled, isDemoHost } from './demo'
 
 const here = window.location.origin
 
@@ -26,12 +26,28 @@ describe('the demo origin variables', () => {
     })
   }
 
-  for (const [name, demo, app, warns] of [
-    ['warn at load about a pair they cannot use', 'demo.localhost:5173', 'http://localhost:5173', true],
-    ['say nothing at load with neither set', '', '', false],
-    ['say nothing at load about a usable pair', 'https://demo.example', 'https://app.example', false],
+  it('gate the sign-in link without showing it on their own', () => {
+    vi.stubEnv('VITE_DEMO_ENABLED', 'true')
+    vi.stubEnv('VITE_DEMO_ORIGIN', '')
+    vi.stubEnv('VITE_APP_ORIGIN', '')
+    expect(isDemoEnabled()).toBe(false)
+
+    vi.stubEnv('VITE_DEMO_ORIGIN', 'https://demo.example')
+    vi.stubEnv('VITE_APP_ORIGIN', here)
+    expect(isDemoEnabled()).toBe(true)
+
+    vi.stubEnv('VITE_DEMO_ENABLED', '')
+    expect(isDemoEnabled()).toBe(false)
+  })
+
+  for (const [name, enabled, demo, app, warns] of [
+    ['warn at load about a pair they cannot use', '', 'demo.localhost:5173', 'http://localhost:5173', true],
+    ['warn at load about a sign-in link with nowhere to go', 'true', '', '', true],
+    ['say nothing at load with neither set', '', '', '', false],
+    ['say nothing at load about a usable pair', '', 'https://demo.example', 'https://app.example', false],
   ] as const) {
     it(name, async () => {
+      vi.stubEnv('VITE_DEMO_ENABLED', enabled)
       vi.stubEnv('VITE_DEMO_ORIGIN', demo)
       vi.stubEnv('VITE_APP_ORIGIN', app)
       const warn = vi.spyOn(console, 'warn').mockImplementation(() => {})
