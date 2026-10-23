@@ -16,6 +16,7 @@ import { themeRevisionAtom } from '@/data/theme.atoms'
 import { activeProjectTimezoneAtom } from '@/data/workspace.atoms'
 import { fadedSeriesColor, getIndexedColor, getSeriesColor } from '@/lib/event-colors'
 import type { ChartComparison } from '../insights/charts'
+import { formatTooltipDate } from '../insights/charts/helpers'
 import { isIncompleteNumericAggregation } from '../insights/constants'
 import { InsightsContent } from '../insights/content'
 import {
@@ -237,6 +238,7 @@ export const InsightTileView = ({
           aggregationFor={aggregationFor}
           compare={compare}
           formatValue={formatYAxisValue(tile.visualization?.yAxisFormat)}
+          formatDate={date => formatTooltipDate(date, granularity, timeZone)}
           metadata={kpiMetadata}
           lightMetric={lightMetrics}
           zeroWhenEmpty={result.case === 'trends' && emptyReadsAsZero(spec)}
