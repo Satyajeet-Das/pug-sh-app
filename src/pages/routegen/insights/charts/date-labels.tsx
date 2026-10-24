@@ -15,9 +15,9 @@ import { PAD_ROW_KEY } from './common'
 import { AXIS_LABEL_PX_PER_CHAR, pickAxisTicks } from './helpers'
 
 // The vendored charts format x labels internally with a browser-local,
-// granularity-blind formatter and expose no prop for it. Bucket labels have to
-// render in the project's reporting zone to match the server's bucket
-// boundaries, and vary by granularity or every hour bucket reads "Jul 19".
+// granularity-blind formatter. Bucket labels have to render in the project's
+// reporting zone to match the server's bucket boundaries, and vary by
+// granularity or every hour bucket reads "Jul 19".
 //
 // The labels reach the axis and the tooltip through `dateLabels` on the chart
 // context, so re-providing that context is a supported seam: no vendored file
@@ -63,7 +63,7 @@ const keepLabelsInside = ({ xScale, dateLabels, innerWidth, margin }: ChartStabl
 // The axis is handed only the rows that get a tick, and asked for all of them, so its own layout
 // scorer never runs. The rest are holes rather than a shorter array: the axis skips a missing row,
 // and indices stay aligned with the hover state it reads them against.
-export function XAxis({ numTicks = 5, ...props }: XAxisProps) {
+export function XAxis({ numTicks = 5, ...props }: Omit<XAxisProps, 'numTicks'> & { numTicks?: number }) {
   const labelled = useDateLabelledContext('axis')
   const value = useMemo(() => {
     const xScale = keepLabelsInside(labelled)
