@@ -3,6 +3,7 @@ import { createContext, useContext, useEffect, useMemo } from 'react'
 import { createPortal } from 'react-dom'
 import { useChartConfig } from '@/components/charts/chart-config-context'
 import ChartStableContext, {
+  ChartProvider,
   type ChartStableContextValue,
   useChartHover,
   useChartStable,
@@ -12,7 +13,7 @@ import type { ChartTooltipProps } from '@/components/charts/tooltip/chart-toolti
 import { DateTicker } from '@/components/charts/tooltip/date-ticker'
 import { TooltipContent } from '@/components/charts/tooltip/tooltip-content'
 import { XAxis as VendoredXAxis, type XAxisProps } from '@/components/charts/x-axis'
-import { PAD_ROW_KEY } from './common'
+import { edgeBucketHover, PAD_ROW_KEY } from './common'
 import { AXIS_LABEL_PX_PER_CHAR, pickAxisTicks } from './helpers'
 
 // Re-provides the context's dateLabels so buckets read in the reporting zone and by granularity. Not upstream's
@@ -115,7 +116,10 @@ export const PILL_SCALING =
 export function ChartTooltip({ rows, children, ...props }: Omit<ChartTooltipProps, 'content' | 'dateLabels'>) {
   const formatters = useContext(FormatDateLabelContext)
   const value = useDateLabelledContext('tooltip')
-  const { containerRef, width, height } = useChartStable()
+  const hover = useChartHover()
+  // Mapped here too: the bar chart's snap lands a commit late, after these springs would have started at the padding.
+  const tooltipData = edgeBucketHover(hover.tooltipData, value)
+  const { containerRef, width, height } = value
 
   // Reuses the chart's own measurement instead of observing the container again.
   useEffect(() => {
@@ -123,7 +127,7 @@ export function ChartTooltip({ rows, children, ...props }: Omit<ChartTooltipProp
   }, [containerRef, width, height])
 
   return (
-    <ChartStableContext.Provider value={value}>
+    <ChartProvider value={{ ...value, ...hover, tooltipData }}>
       <VendoredTooltip
         {...props}
         content={({ point }) => (
@@ -135,7 +139,7 @@ export function ChartTooltip({ rows, children, ...props }: Omit<ChartTooltipProp
         showDatePill={false}
       />
       <DatePill />
-    </ChartStableContext.Provider>
+    </ChartProvider>
   )
 }
 

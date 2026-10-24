@@ -1,17 +1,31 @@
-import { memo, useMemo } from 'react'
+import { memo, useLayoutEffect, useMemo } from 'react'
 import type { Granularity } from '@/api/genproto/shared/insights/v1/insights_pb'
+import { useChartHover, useChartStable } from '@/components/charts/chart-context'
 import { ComposedChart } from '@/components/charts/composed-chart'
 import { Grid } from '@/components/charts/grid'
 import { SeriesBar } from '@/components/charts/series-bar'
 import type { SeriesColor } from '@/lib/event-colors'
 import { compactNumber } from '@/lib/format'
 import { cn } from '@/lib/utils'
-import { CHART_MARGIN, PAD_ROW_KEY, useVendoredChartPrep } from './common'
+import { CHART_MARGIN, edgeBucketHover, PAD_ROW_KEY, useVendoredChartPrep } from './common'
 import { ChartTooltip, DateLabelProvider, PILL_SCALING, XAxis } from './date-labels'
 import type { ChartPoint } from './types'
 import { YAxis } from './y-axis'
 
 const HOUR_MS = 60 * 60 * 1000
+
+// The bars and the axis read the shell's hover, so it has to hold the edge bucket too, before it paints.
+function SnapPaddingHover() {
+  const { tooltipData, setTooltipData } = useChartHover()
+  const stable = useChartStable()
+
+  useLayoutEffect(() => {
+    const snapped = edgeBucketHover(tooltipData, stable)
+    if (snapped !== tooltipData) setTooltipData(snapped)
+  }, [tooltipData, setTooltipData, stable])
+
+  return null
+}
 
 // Wraps the vendored chart (src/components/charts); never edit that directory.
 // Series colors, tooltip rows and date labels are ours to inject; the chart
@@ -86,6 +100,7 @@ export const BarChart = memo(function BarChart({
         {seriesNames.map((_, si) => (
           <SeriesBar key={si} dataKey={`series${si}`} fill={seriesColors[si]?.line} radius={stacked ? 0 : 3} />
         ))}
+        <SnapPaddingHover />
         <ChartTooltip rows={tooltipRows} />
       </ComposedChart>
     </DateLabelProvider>
