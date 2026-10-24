@@ -1,5 +1,5 @@
 import { curveMonotoneX } from '@visx/curve'
-import { useCallback, useMemo, useState } from 'react'
+import { useCallback, useMemo } from 'react'
 import { Granularity } from '@/api/genproto/shared/insights/v1/insights_pb'
 import type { SeriesColor } from '@/lib/event-colors'
 import { formatAxisDate, formatTooltipDate, spansMultipleDays } from './helpers'
@@ -29,14 +29,6 @@ const PENDING_KEY = '__pending'
 // The compare-vs-prior window. `values` is already laid over this window's buckets by the caller
 // (alignComparisonValues), one per row of `data`.
 export type ChartComparison = { label: string; values: number[]; color: SeriesColor }
-
-// The vendored shell paints its first frame finished and starts the reveal from an effect. Its first phase
-// report lands in that same flush, so any report opens the gate, and a shell that skips the reveal still shows.
-export const useRevealGate = () => {
-  const [revealed, setRevealed] = useState(false)
-  const onPhaseChange = useCallback(() => setRevealed(true), [])
-  return { revealed, onPhaseChange }
-}
 
 // Prep shared by the vendored-chart wrappers (area, line, bar). `date` stays a
 // real Date: the wrappers inject the formatted labels via the context override.

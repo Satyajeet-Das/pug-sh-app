@@ -2,7 +2,6 @@ import { render } from '@testing-library/react'
 import { type ReactNode, useLayoutEffect } from 'react'
 import { describe, expect, it, vi } from 'vitest'
 import { Granularity } from '@/api/genproto/shared/insights/v1/insights_pb'
-import { StaticChartPreviewProvider } from '@/components/charts/static-chart-preview-context'
 import type { SeriesColor } from '@/lib/event-colors'
 import { AreaChart } from './area-chart'
 import { BarChart } from './bar-chart'
@@ -23,13 +22,10 @@ const DATA: ChartPoint[] = [
   { date: new Date('2026-07-21T00:00:00Z'), values: [3] },
 ]
 
-const chartRoot = () => document.querySelector('svg')?.closest('div.relative')
-
-// A later sibling's layout effect reads the chart's first commit, which the browser can paint before the
-// shell's effects start the reveal.
-const FirstCommit = ({ seen }: { seen: { hidden?: boolean } }) => {
+// A later sibling's layout effect reads the chart's first commit, which the browser can paint before any effect runs.
+const FirstCommit = ({ seen }: { seen: { width?: number } }) => {
   useLayoutEffect(() => {
-    seen.hidden = chartRoot()?.classList.contains('invisible')
+    seen.width = Number.parseFloat(document.querySelector('svg > defs > clipPath > rect')?.getAttribute('width') ?? '')
   }, [seen])
   return null
 }
@@ -40,8 +36,8 @@ describe('vendored chart reveal', () => {
     ['area', AreaChart],
     ['bar', BarChart],
   ] as const) {
-    it(`${name}: hides the finished first frame, then shows the reveal`, () => {
-      const seen: { hidden?: boolean } = {}
+    it(`${name}: clips the series away in its first frame`, () => {
+      const seen: { width?: number } = {}
       render(
         <>
           <Chart data={DATA} granularity={Granularity.DAY} seriesColors={COLORS} seriesNames={['a']} timeZone="UTC" />
@@ -49,18 +45,7 @@ describe('vendored chart reveal', () => {
         </>,
       )
 
-      expect(seen.hidden).toBe(true)
-      expect(chartRoot()?.classList.contains('invisible')).toBe(false)
-    })
-
-    it(`${name}: shows a chart whose shell never runs the reveal`, () => {
-      render(
-        <StaticChartPreviewProvider>
-          <Chart data={DATA} granularity={Granularity.DAY} seriesColors={COLORS} seriesNames={['a']} timeZone="UTC" />
-        </StaticChartPreviewProvider>,
-      )
-
-      expect(chartRoot()?.classList.contains('invisible')).toBe(false)
+      expect(seen.width).toBe(0)
     })
   }
 })
