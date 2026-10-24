@@ -59,6 +59,19 @@ it('cancels a shared request only once every asker has left', async () => {
   stayed.abort()
   expect(sent[0].aborted).toBe(true)
 
-  queryInsights(rpc, request(), headers, new AbortController().signal)
+  const next = new AbortController()
+  queryInsights(rpc, request(), headers, next.signal).catch(() => {})
   expect(query).toHaveBeenCalledTimes(2)
+  next.abort()
+})
+
+it('sends nothing for a caller that has already left', async () => {
+  const { rpc, query } = fakeRpc()
+  const left = new AbortController()
+  left.abort()
+
+  const asked = queryInsights(rpc, request(), headers, left.signal)
+
+  expect(query).not.toHaveBeenCalled()
+  await expect(asked).rejects.toBe(left.signal.reason)
 })

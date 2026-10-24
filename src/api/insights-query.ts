@@ -17,6 +17,7 @@ export const queryInsights = (
   headers: Record<string, string> | undefined,
   signal: AbortSignal,
 ) => {
+  if (signal.aborted) return Promise.reject<QueryResponse>(signal.reason)
   const key = stringifyQueryKey({ headers, request })
   let entry = inFlight.get(key)
   if (!entry) {
