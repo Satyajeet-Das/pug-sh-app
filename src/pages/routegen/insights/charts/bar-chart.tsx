@@ -101,7 +101,7 @@ export const BarChart = memo(function BarChart({
           <SeriesBar key={si} dataKey={`series${si}`} fill={seriesColors[si]?.line} radius={stacked ? 0 : 3} />
         ))}
         <SnapPaddingHover />
-        <ChartTooltip rows={tooltipRows} />
+        <ChartTooltip rows={tooltipRows} showCrosshair={false} />
       </ComposedChart>
     </DateLabelProvider>
   )
