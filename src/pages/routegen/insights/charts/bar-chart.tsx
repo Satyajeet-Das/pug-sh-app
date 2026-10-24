@@ -49,8 +49,8 @@ export const BarChart = memo(function BarChart({
   // over the y-axis labels, on the right it is clipped by the SVG, and it is worst at
   // low bucket counts (~70px of a 640px plot at 5 buckets). A bucket-less row half a
   // bucket beyond each end moves bucket i to (i + 0.5)/n of the width (band-scale
-  // placement), which clears both edges for every n: a bar group is at most
-  // 0.46 * innerWidth/(n + 1) wide, and 0.5/n > 0.46/(n + 1) always.
+  // placement), which clears both edges for every n: half a bar group is at most
+  // 0.46 * innerWidth/(n + 1), and 0.5/n > 0.46/(n + 1) always.
   const paddedData = useMemo(() => {
     const first = chartData.at(0)?.date as Date | undefined
     const last = chartData.at(-1)?.date as Date | undefined

@@ -2,7 +2,7 @@ import { curveMonotoneX } from '@visx/curve'
 import { useCallback, useMemo } from 'react'
 import { Granularity } from '@/api/genproto/shared/insights/v1/insights_pb'
 import type { SeriesColor } from '@/lib/event-colors'
-import { formatAxisDate, formatTooltipDate, spansMultipleDays } from './helpers'
+import { formatAxisDate, formatTooltipDate, formatTooltipTitle, spansMultipleDays } from './helpers'
 import type { ChartPoint } from './types'
 
 // Line defaults to curveNatural, which overshoots, and the y-domain pads the top but pins
@@ -102,6 +102,7 @@ export const useVendoredChartPrep = (
     () => ({
       axis: (date: Date) => formatAxisDate(date, granularity, timeZone, axisNeedsDay),
       tooltip: (date: Date) => formatTooltipDate(date, granularity, timeZone),
+      title: (date: Date) => formatTooltipTitle(date, timeZone),
     }),
     [granularity, timeZone, axisNeedsDay],
   )

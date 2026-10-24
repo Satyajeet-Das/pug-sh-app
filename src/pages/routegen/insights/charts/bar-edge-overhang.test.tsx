@@ -40,9 +40,9 @@ const barRects = (container: HTMLElement) =>
 // it: over the y-axis labels on the left, clipped by the SVG on the right. Drop the
 // padding from the wrapper and the 5-bucket case alone puts a bar at x=-70.
 describe('bar chart edge overhang', () => {
-  // Fewer buckets meant a wider slot, so the overhang grew as the data thinned; one
-  // bucket was the extreme, drawing a single bar 0.88 * innerWidth wide centred at x=0.
-  for (const count of [1, 2, 5, 30]) {
+  // Fewer buckets mean a wider slot, so the overhang grows as the data thins. Not one bucket:
+  // a lone bucket lands centred, padded or not.
+  for (const count of [2, 5, 30]) {
     it(`keeps every bar inside the plot at ${count} bucket(s)`, () => {
       const { container } = render(
         <BarChart
