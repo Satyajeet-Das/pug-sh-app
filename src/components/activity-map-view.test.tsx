@@ -13,9 +13,11 @@ vi.mock('@/lib/world-countries', async importOriginal => ({
 // The bug: MapLibre's constructor throws GPUInitializationError when the browser has no WebGL2, and
 // it threw from an effect, so the route's error boundary took the whole Overview down with the one
 // tile that couldn't draw.
-it('swaps the map for a note when the browser has no WebGL2, instead of crashing the page', () => {
+it('swaps the map for a note when the browser has no WebGL2, instead of crashing the page', async () => {
   withoutWebGL2()
   vi.spyOn(console, 'warn').mockImplementation(() => {})
+  // The map is lazy, and transforming MapLibre outlasts findByText's timeout.
+  await import('@/components/activity-heatmap-map')
   render(
     <Provider store={createStore()}>
       <CrashBoundary>
@@ -24,6 +26,6 @@ it('swaps the map for a note when the browser has no WebGL2, instead of crashing
     </Provider>,
   )
 
+  await screen.findByText('Map unavailable in this browser')
   expect(screen.queryByText(CRASHED)).toBeNull()
-  screen.getByText('Map unavailable in this browser')
 })

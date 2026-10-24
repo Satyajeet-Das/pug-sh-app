@@ -1,6 +1,6 @@
 import { useAtomValue } from 'jotai'
 import { Bot, Copy, UserX } from 'lucide-react'
-import type { ReactNode } from 'react'
+import { lazy, type ReactNode, Suspense } from 'react'
 import { useLocation } from 'wouter'
 import { LocationLabel } from '@/components/country-flag'
 import HoverSwap from '@/components/hover-swap'
@@ -11,10 +11,12 @@ import { formatRelative, useRelativeTime } from '@/hooks/use-relative-time'
 import { useRouteParams } from '@/lib/route-params'
 import { formatDateTime, tsToDate } from '@/lib/timestamp'
 import { cn } from '@/lib/utils'
-import { ProfileAvatar } from '../_avatar'
 import { resolveIdentity } from '../_identity'
 import StatusDot from '../_status-dot'
 import { profileFamilyAtom } from './_data'
+
+// The router imports this shell eagerly, so a static avatar import puts DiceBear on every route's first load.
+const ProfileAvatar = lazy(() => import('../_avatar').then(module => ({ default: module.ProfileAvatar })))
 
 const TABS = [
   { suffix: '', label: 'Overview' },
@@ -85,7 +87,9 @@ const ProfileShell = ({ children }: { children: ReactNode }) => {
       <div className="flex flex-wrap items-start justify-between gap-x-6 gap-y-4">
         <div className="flex min-w-0 grow basis-[15rem] items-start gap-3">
           <div className="relative shrink-0">
-            <ProfileAvatar identity={identity} bot={profile.activity?.bot} className="size-10 rounded-md" />
+            <Suspense fallback={<div className="size-10 rounded-md bg-muted" />}>
+              <ProfileAvatar identity={identity} bot={profile.activity?.bot} className="size-10 rounded-md" />
+            </Suspense>
             <span className="absolute -bottom-0.5 -right-0.5">
               <StatusDot lastSeen={lastSeen} />
             </span>

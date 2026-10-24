@@ -277,7 +277,7 @@ const Insights = () => {
     retry,
   } = useDebouncedQuery(
     queryKey,
-    async () => {
+    async signal => {
       const globalFilters = toProtoFilters(propFilters)
       const filterGroups = globalFilters.length > 0 ? [{ filters: globalFilters, operator: LogicalOperator.AND }] : []
       // Top-k and map specs carry no events/breakdowns (the backend rejects them); the scope
@@ -337,7 +337,7 @@ const Insights = () => {
           ),
           spec,
         },
-        { headers },
+        { headers, signal },
       )
       // One event per settled query: useDebouncedQuery re-runs this fn only when queryKey changes,
       // and the 300ms debounce collapses keystrokes, so no dedup is needed here. Shape only, never

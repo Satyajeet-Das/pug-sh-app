@@ -153,6 +153,7 @@ export const InsightTileView = ({
     [trendSeries, granularity, timeZone],
   )
   const kindOrder = useMemo(() => (spec?.events ?? []).map(entry => entry.event?.kind ?? ''), [spec?.events])
+  const breakdowns = useMemo(() => (spec?.breakdowns ?? []).map(item => item.property), [spec?.breakdowns])
   const funnelSeriesData = useMemo(() => {
     const labels = disambiguateLabels(
       funnelSeriesList.map((series, index) => breakdownLabel(series.breakdown, `Series ${index + 1}`)),
@@ -271,7 +272,7 @@ export const InsightTileView = ({
         seriesAggregations={seriesAggregations}
         viewMode={effectiveViewMode}
         granularity={granularity}
-        breakdowns={(spec?.breakdowns ?? []).map(item => item.property)}
+        breakdowns={breakdowns}
         breakdownResponseLimit={spec?.breakdownLimit ?? BREAKDOWN_RESPONSE_LIMIT}
         retentionSeriesList={retentionSeriesList}
         retentionLabels={retentionLabels}
