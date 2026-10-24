@@ -143,8 +143,6 @@ export function ChartTooltip({ rows, children, ...props }: Omit<ChartTooltipProp
   )
 }
 
-ChartTooltip.displayName = 'ChartTooltip'
-
 // Upstream's pill centres on the hovered bucket and never clamps, so at either end of the chart the tile
 // clipped part of it. This forks its tracker to add the clamp.
 function DatePill() {
