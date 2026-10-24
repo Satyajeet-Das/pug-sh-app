@@ -3,6 +3,7 @@ import { render, screen } from '@testing-library/react'
 import { createStore, Provider } from 'jotai'
 import type { ReactNode } from 'react'
 import { describe, expect, it, vi } from 'vitest'
+import { ProjectSchema } from '@/api/genproto/dashboard/projects/v1/projects_pb'
 import {
   AggregationType,
   Granularity,
@@ -23,6 +24,7 @@ vi.mock('@/components/charts/chart-parent-size', () => ({
 }))
 
 const { TopKList } = await import('./top-k-list')
+const { activeProjectAtom } = await import('@/data/workspace.atoms')
 const { InsightTileView } = await import('../../dashboards/insight-tile-view')
 
 const row = (dimensionValue: string) => create(TopKRowSchema, { dimensionValue, value: 10 })
@@ -54,6 +56,29 @@ describe('TopKList', () => {
       />,
     )
     expect(label(kind)).toBe(kind)
+  })
+
+  const renderUserRow = (store = createStore()) => {
+    render(
+      <Provider store={store}>
+        <TopKList
+          rows={[row('cookieless-9f21c0de')]}
+          dimension={TopKQuery_Dimension.USER}
+          metric={AggregationType.TOTAL}
+        />
+      </Provider>,
+    )
+    return screen.getByText('cookieless-9f21c0de').closest('a')
+  }
+
+  it('links a user row with no profile by its raw id', () => {
+    const store = createStore()
+    store.set(activeProjectAtom, create(ProjectSchema, { id: 'p1' }))
+    expect(renderUserRow(store)?.getAttribute('href')).toBe('/p/p1/profiles/cookieless-9f21c0de')
+  })
+
+  it('leaves a user row unlinked outside a project, as on a shared dashboard', () => {
+    expect(renderUserRow()).toBeNull()
   })
 
   it('gets the property from a dashboard tile spec', () => {
