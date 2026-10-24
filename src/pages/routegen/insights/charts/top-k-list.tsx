@@ -1,11 +1,12 @@
 import { MotionConfig, motion } from 'motion/react'
-import { useState } from 'react'
+import { type ReactNode, useState } from 'react'
+import { Link } from 'wouter'
 import { AggregationType, TopKQuery_Dimension, type TopKRow } from '@/api/genproto/shared/insights/v1/insights_pb'
 import { DEFAULT_CHART_ENTER_TRANSITION } from '@/components/charts/animation'
 import { transitionWithDelay } from '@/components/charts/motion-utils'
-import ProjectLink from '@/components/project-link'
 import { getIndexedColor } from '@/lib/event-colors'
 import { compactNumber } from '@/lib/format'
+import { useProjectPrefix } from '@/lib/project-path'
 import { propertyValueLabel } from '@/lib/property-values'
 import { cn } from '@/lib/utils'
 import { resolveIdentity } from '../../profiles/_identity'
@@ -23,6 +24,20 @@ const formatValue = (value: number) => {
 // Full-precision value for the hover title; compactNumber drops digits ("1.2K").
 const exactValue = (value: number) => value.toLocaleString('en-US', { maximumFractionDigits: 6 })
 
+// A shared dashboard has no project to link into.
+const ProfileLink = ({ id, className, children }: { id: string; className?: string; children: ReactNode }) => {
+  const prefix = useProjectPrefix()
+  if (!prefix) return <span className={cn('block truncate', className)}>{children}</span>
+  return (
+    <Link
+      href={`${prefix}/profiles/${encodeURIComponent(id)}`}
+      className={cn('block truncate text-link hover:underline underline-offset-4', className)}
+    >
+      {children}
+    </Link>
+  )
+}
+
 const RowLabel = ({ row, dimension, property }: { row: TopKRow; dimension: TopKQuery_Dimension; property: string }) => {
   if (row.isOthers) {
     return (
@@ -33,23 +48,21 @@ const RowLabel = ({ row, dimension, property }: { row: TopKRow; dimension: TopKQ
   }
 
   if (dimension === TopKQuery_Dimension.USER) {
-    // Profile enrichment is absent for unidentified distinct_ids; show the raw key.
+    // Only identified profiles are attached; the rest link by raw id.
     if (!row.profile) {
-      return <span className="block truncate font-mono text-muted-foreground">{row.dimensionValue}</span>
+      return (
+        <ProfileLink id={row.dimensionValue} className="font-mono">
+          {row.dimensionValue}
+        </ProfileLink>
+      )
     }
     const identity = resolveIdentity(row.profile)
     const secondary = identity.email || row.profile.externalId || row.profile.id
     return (
       <div className="min-w-0">
-        <ProjectLink
-          href={`/profiles/${encodeURIComponent(row.profile.id)}`}
-          className={cn(
-            'block truncate text-link hover:underline underline-offset-4',
-            identity.isFallback && 'font-mono',
-          )}
-        >
+        <ProfileLink id={row.profile.id} className={identity.isFallback ? 'font-mono' : undefined}>
           {identity.name}
-        </ProjectLink>
+        </ProfileLink>
         {secondary && secondary !== identity.name && (
           <span className={cn('block truncate text-xs text-muted-foreground', !identity.email && 'font-mono')}>
             {secondary}

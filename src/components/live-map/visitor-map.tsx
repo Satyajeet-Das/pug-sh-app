@@ -25,9 +25,9 @@ type Props = {
   visitors: ActivityEvent[]
   selectedDistinctId?: string | null
   onSelectVisitor?: (distinctId: string) => void
-  profileHref?: (distinctId: string) => string | undefined
+  profileHref?: (distinctId: string) => string
   journeyFor?: (distinctId: string) => ActivityEvent[]
-  // Whoever the panel's pointer is on — rings their marker so a row can be located on the map.
+  // The visitor under the panel's pointer; their marker gets a ring so the row can be found on the map.
   highlightedDistinctId?: string | null
   // Reports the marker under the pointer, so the panel can answer the same question in reverse.
   onHoverVisitor?: (distinctId: string | null) => void
@@ -52,8 +52,8 @@ type Entry = {
 
 const entryId = (entry: MapEntry) => (entry.type === 'cluster' ? `cluster:${entry.groupKey}` : entry.distinctId)
 
-// Pinned and pointed-at markers rise above their neighbours, the pointer's target highest — its halo
-// is the thinner of the two and would otherwise be hidden under a face beside it.
+// Pinned and pointed-at markers rise above their neighbours, the pointer's target highest, since its
+// halo is the thinner of the two and would otherwise be hidden under a face beside it.
 const stackFor = (id: string, selectedId: string | null, highlightedId: string | null) => {
   if (id === highlightedId) return '25'
   if (id === selectedId) return '20'
@@ -85,7 +85,7 @@ const growKeyframes = (direction: 'in' | 'out'): [Keyframe[], KeyframeAnimationO
   const full = { opacity: 1, transform: 'scale(1)' }
   const frames = direction === 'in' ? [shy, full] : [full, shy]
 
-  // Reduced motion keeps the fade — it's what tells you the popover changed subject — and drops the
+  // Reduced motion keeps the fade (it's what tells you the popover changed subject) and drops the
   // travel.
   if (reducedMotion.matches) {
     for (const frame of frames) frame.transform = 'none'
@@ -123,7 +123,7 @@ const LiveVisitorMap = ({
   // expensive GeoIP/centroid grouping runs a single time per poll (not once per consumer).
   const groups = useMemo(() => buildGroups(visitors), [visitors])
 
-  // Coordinates for every visitor regardless of clustering — used to fly to a selection.
+  // Coordinates for every visitor regardless of clustering, used to fly to a selection.
   const visitorIndex = useMemo(() => groupsToPoints(groups), [groups])
 
   const entries = useMemo(
@@ -177,8 +177,8 @@ const LiveVisitorMap = ({
   }, [activeEntry, selectedDistinctId])
 
   // A pinned visitor who aged out keeps their popover, held where they were last seen. Absent from
-  // visitorIndex is genuinely gone; absent from `entries` alone only means they're inside a cluster —
-  // and gone from visitorIndex implies gone from `entries`, so `activeEntry` is already null here.
+  // visitorIndex is genuinely gone; absent from `entries` alone only means they're inside a cluster.
+  // Gone from visitorIndex implies gone from `entries`, so `activeEntry` is already null here.
   // Holds the ref's own object: the effect below setStates on this, so it must keep its identity.
   const ghost = lastPinnedRef.current
   const pinnedGhost =
@@ -257,7 +257,7 @@ const LiveVisitorMap = ({
   // Before paint, so the popover never shows a frame at the container's top-left corner.
   useLayoutEffect(place, [place, rendered, journey])
 
-  // Grow in from the marker on every change of subject — but not on a poll, which hands back a fresh
+  // Grow in from the marker on every change of subject, but not on a poll, which hands back a fresh
   // entry object for the same visitor. Layout effect so the opening frame is never painted at rest.
   useLayoutEffect(() => {
     const surface = surfaceRef.current
@@ -326,7 +326,7 @@ const LiveVisitorMap = ({
   }, [])
   const holdHover = useCallback(() => window.clearTimeout(hoverTimer.current), [])
 
-  // Stable, and the id comes off the element rather than a closure — a per-marker arrow function
+  // Stable, and the id comes off the element rather than a closure: a per-marker arrow function
   // would capture the reconcile pass that created it and pin that whole poll's data for as long as
   // the marker lives.
   const onMarkerEnter = useCallback(
@@ -429,14 +429,14 @@ const LiveVisitorMap = ({
     }
   }, [highlightedDistinctId, repaint])
 
-  // Theme swap — restyle the basemap; DOM markers persist across setStyle.
+  // Theme swap: restyle the basemap; DOM markers persist across setStyle.
   useEffect(() => {
     const map = mapRef.current
     if (!map || !ready) return
     map.setStyle(buildBasemapStyle(mapTheme))
   }, [mapTheme, ready, mapRef])
 
-  // Keep basemap/tile load failures (e.g. a missing or invalid /basemap.pmtiles) non-fatal —
+  // Keep basemap/tile load failures (e.g. a missing or invalid /basemap.pmtiles) non-fatal:
   // the visitor markers still render over a blank background instead of crashing the map.
   useEffect(() => {
     const map = mapRef.current
@@ -474,7 +474,7 @@ const LiveVisitorMap = ({
     const map = mapRef.current
     if (!map || !ready) return
 
-    // Repaints the halo too — `entries` doesn't change on selection, so the reconcile below won't run.
+    // Repaints the halo too: `entries` doesn't change on selection, so the reconcile below won't run.
     for (const entry of entriesRef.current.values()) repaint(entry, selectedDistinctId, highlightRef.current)
 
     if (!selectedDistinctId) {
@@ -483,7 +483,7 @@ const LiveVisitorMap = ({
     }
 
     // Fly once per selection. This effect also re-runs on every poll (visitorIndex is rebuilt each
-    // time), and re-centring the viewport on the pinned visitor every 10s isn't following them —
+    // time), and re-centring the viewport on the pinned visitor every 10s isn't following them;
     // it's fighting whoever is trying to look somewhere else.
     if (flownToRef.current === selectedDistinctId) return
     const target = visitorIndex.get(selectedDistinctId)
@@ -563,8 +563,8 @@ const LiveVisitorMap = ({
 
     // `zoom` fires every frame of a wheel-zoom and every frame of the 700ms flyTo/fitBounds
     // animations, and each reposition is O(markers) of layout-affecting setLngLat writes. Coalesce
-    // to one run per frame via rAF, and skip entirely when the scatter cell is unchanged — notably
-    // it's a constant 0 below the ramp floor, so panning/zooming at the world-overview zoom is free.
+    // to one run per frame via rAF, and skip entirely when the scatter cell is unchanged. The cell is
+    // a constant 0 below the ramp floor, so panning/zooming at the world-overview zoom is free.
     let frame = 0
     let lastCell = Number.NaN
     const reposition = () => {
