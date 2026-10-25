@@ -30,7 +30,7 @@
         "d3-array": "^3.2.4",
         "d3-shape": "^3.2.0",
         "date-fns": "^4.1.0",
-        "dodopayments-checkout": "^1.9.9",
+        "dodopayments-checkout": "^2.0.0",
         "jotai": "^3.0.0",
         "jotai-family": "^1.1.0",
         "lucide-react": "^1.48.0",
@@ -755,7 +755,7 @@
 
     "diff": ["diff@8.0.4", "", {}, "sha512-DPi0FmjiSU5EvQV0++GFDOJ9ASQUVFh5kD+OzOnYdi7n3Wpm9hWWGfB/O2blfHcMVTL5WkQXSnRiK9makhrcnw=="],
 
-    "dodopayments-checkout": ["dodopayments-checkout@1.9.9", "", {}, "sha512-AgaAcer4x8gCWUK2waeTESIJc3/WiejogbCPbwkh5CIMWxLkAPIIAFy64q3qFYO/FNQ5xlM9uvLDNwJgXG/A4g=="],
+    "dodopayments-checkout": ["dodopayments-checkout@2.0.0", "", {}, "sha512-Ia/U/PB66c/gCsNkO2v9/EhMGd/jr9IALQ1dnMn7bymPHI2rTB0Quk2ALhPSXaUtWkb3jW2G7lxc+OrGVYnFHw=="],
 
     "dom-accessibility-api": ["dom-accessibility-api@0.5.16", "", {}, "sha512-X7BJ2yElsnOJ30pZF4uIIDfBEVgF4XEBxL9Bxhy6dnrm5hkzqmsWHGTiHqRiITNhMyFLyAiWndIJP7Z1NTteDg=="],
 
