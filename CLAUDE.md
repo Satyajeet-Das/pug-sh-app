@@ -498,6 +498,8 @@ The read-only demo signs everyone in as one shared viewer (`demoSignInAtom`), an
 
 `App.test.tsx` "the demo" has a test for each bullet; `auth/demo.test.ts` covers the variables.
 
+Crawlers are kept off the demo's origin, because each load they render mints a demo session (Google's renderers minted thousands a day in October 2026). Both origins get the same `public/robots.txt`, so `functions/robots.txt.ts`, a Cloudflare Pages Function, answers `Disallow: /` on the demo's origin and hands every other host the static file. It reads the same two variables, which Pages also passes to Functions.
+
 ### Filters & Query Semantics
 
 - Shared insights proto now uses grouped global filters:
