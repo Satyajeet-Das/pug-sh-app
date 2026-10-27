@@ -1,0 +1,3 @@
+# Cloudflare already noindexes previews, but not the production pages.dev alias, which duplicates the app's domain.
+https://:project.pages.dev/*
+  X-Robots-Tag: noindex

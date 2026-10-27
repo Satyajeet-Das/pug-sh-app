@@ -500,6 +500,8 @@ The read-only demo signs everyone in as one shared viewer (`demoSignInAtom`), an
 
 Crawlers are kept off the demo's origin, because each load they render mints a demo session (Google's renderers minted thousands a day in October 2026). Both origins get the same `public/robots.txt`, so `functions/robots.txt.ts`, a Cloudflare Pages Function, answers `Disallow: /` on the demo's origin and hands every other host the static file. It reads the same two variables, which Pages also passes to Functions.
 
+The Pages project's production `*.pages.dev` alias serves the same build under another name, so `public/_headers` sends it `X-Robots-Tag: noindex`; previews get that header from Cloudflare by default. Deindexing takes the noindex, not a `Disallow`: Google keeps a blocked URL in its index, since it can never fetch the page to see the header. `_headers` doesn't reach a Function's response, so a route moved into `functions/` has to set the header itself.
+
 ### Filters & Query Semantics
 
 - Shared insights proto now uses grouped global filters:
