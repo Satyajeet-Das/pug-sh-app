@@ -6,6 +6,7 @@ const oidc = vi.hoisted(() => ({
   signinRedirect: vi.fn(),
   readSigninResponseState: vi.fn(),
   clearStaleState: vi.fn(),
+  getAuthorizationEndpoint: vi.fn(),
   managerSettings: vi.fn(),
 }))
 
@@ -17,6 +18,7 @@ vi.mock('oidc-client-ts', () => ({
   UserManager: class {
     signinRedirect = oidc.signinRedirect
     clearStaleState = oidc.clearStaleState
+    metadataService = { getAuthorizationEndpoint: oidc.getAuthorizationEndpoint }
     constructor(settings: unknown) {
       oidc.managerSettings(settings)
     }
@@ -30,6 +32,7 @@ import {
   pendingOIDCInviteToken,
   pendingOIDCProviderID,
   startOIDCSignIn,
+  UnsafeProviderError,
 } from './oidc'
 
 const providerInit = {
@@ -78,6 +81,7 @@ describe('OIDC redirect lifecycle', () => {
     oidc.signinRedirect.mockReset()
     oidc.readSigninResponseState.mockReset()
     oidc.clearStaleState.mockReset().mockResolvedValue(undefined)
+    oidc.getAuthorizationEndpoint.mockReset().mockResolvedValue('https://login.example.com/authorize')
     oidc.managerSettings.mockReset()
   })
 
@@ -101,6 +105,38 @@ describe('OIDC redirect lifecycle', () => {
     expect(pendingOIDCProviderID()).toBe(provider.id)
     // CompleteOIDCSignInRequest.nonce is min_len 16, so a shorter one never reaches the server.
     expect(oidc.signinRedirect.mock.calls[0][0].nonce.length).toBeGreaterThanOrEqual(16)
+  })
+
+  it.each([
+    ['a non-https scheme', 'javascript:x'],
+    ['http off localhost', 'http://idp.example.com/authorize'],
+    ['http on a host that only starts with localhost', 'http://localhost.example.com/authorize'],
+    ['an unparseable value', 'not a url'],
+  ])('refuses an authorization endpoint with %s', async (_kind, endpoint) => {
+    oidc.getAuthorizationEndpoint.mockResolvedValue(endpoint)
+
+    await expect(startOIDCSignIn(provider)).rejects.toThrow(UnsafeProviderError)
+    expect(oidc.signinRedirect).not.toHaveBeenCalled()
+    expect(pendingOIDCProviderID()).toBe('')
+  })
+
+  it.each(['http://localhost:8080/authorize', 'http://127.0.0.1:8080/authorize', 'http://[::1]:8080/authorize'])(
+    'allows %s for local development',
+    async endpoint => {
+      oidc.getAuthorizationEndpoint.mockResolvedValue(endpoint)
+      oidc.signinRedirect.mockResolvedValue(undefined)
+
+      await startOIDCSignIn(provider)
+
+      expect(oidc.signinRedirect).toHaveBeenCalledOnce()
+    },
+  )
+
+  it('does not redirect when the discovery document cannot be fetched', async () => {
+    oidc.getAuthorizationEndpoint.mockRejectedValue(new Error('discovery failed'))
+
+    await expect(startOIDCSignIn(provider)).rejects.toThrow('discovery failed')
+    expect(oidc.signinRedirect).not.toHaveBeenCalled()
   })
 
   it('returns the code and original PKCE values without exchanging tokens in the browser', async () => {
@@ -131,7 +167,7 @@ describe('OIDC redirect lifecycle', () => {
     await expect(completeOIDCRedirect(provider)).rejects.toThrow('The identity provider rejected the sign-in request')
   })
 
-  // sessionStorage cleared between the redirect and the return (new tab, Safari ITP) — without the
+  // sessionStorage cleared between the redirect and the return (new tab, Safari ITP). Without the
   // guard the app posts an undefined verifier and the server rejects it as a malformed request.
   it('rejects a callback missing its PKCE verifier', async () => {
     oidc.readSigninResponseState.mockResolvedValue({

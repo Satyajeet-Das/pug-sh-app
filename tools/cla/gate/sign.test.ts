@@ -83,7 +83,7 @@ test('maySign refuses someone already signed on the base branch', () => {
 
 // A signature already in the pull request's own head counts too. Writing a second one would put the
 // id in the file twice once the branch merges the base, and the file is rejected for a repeated id
-// and version outright — failing the gate for the crime of signing enthusiastically.
+// and version outright, failing the gate for the crime of signing enthusiastically.
 test('maySign refuses someone already signed in head', () => {
   expect(refusalOf(maySign(alice, alice, [alice], signedBy(alice), empty, 'v1'))).toBe('already-signed')
 })
@@ -230,6 +230,25 @@ test('an unlinked commit email is explained', async () => {
   expect(gh.posted[0]!.body).toContain('c2')
 })
 
+// A Co-authored-by address is pull-request text, so a link or @mention in one must not render live.
+test('an unidentified co-author address is posted inside a code span, not as live markdown', async () => {
+  const gh = signable()
+  gh.pr.commits = 2
+  const trailers = 'Co-authored-by: x <[sign here](https://evil.example) @victim>\nCo-authored-by: y <a` @victim `b>'
+  gh.commits = [
+    { sha: 'c0', author: null, committer: null, message: '' },
+    commit('c1', alice, alice, `feat\n\n${trailers}\n`),
+  ]
+
+  const err = await caught(sign(newSigner(gh, user('mallory', 77))))
+  expect(refusalOf(err)).toBe('not-a-principal')
+  const body = gh.posted[0]!.body
+  expect(body).toContain('fix that first: c0, `')
+  const live = body.replace(/`[^`]*`/g, '')
+  expect(live).not.toContain('evil.example')
+  expect(live).not.toContain('@victim')
+})
+
 // The signer must never be the thing that makes the file unparseable for everyone else, so it
 // validates what it is about to write.
 test('nothing is written when the result would be invalid', async () => {
@@ -349,7 +368,7 @@ test('the write carries the sha the file was read at', async () => {
 })
 
 // head is the pull request's own file, and appendOnly takes a hand-written signature from nobody but
-// the opener — so an entry there naming a co-author is forged. Crediting it refused their /sign as
+// the opener, so an entry there naming a co-author is forged. Crediting it refused their /sign as
 // already signed, on a green job, having recorded nothing.
 test('a forged entry in the head file cannot block a co-author from signing', async () => {
   const gh = coauthored()

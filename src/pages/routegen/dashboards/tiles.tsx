@@ -18,17 +18,33 @@ import { DashboardInsightContent } from './insight-tile-content'
 import { getProtoRange } from './query'
 import { TileHeaderEdit } from './tile-header-edit'
 
+// `$` too: snarkdown inserts link URLs with String.replace, where it starts a replacement pattern.
 const escapeMarkdownHTML = (value: string) =>
-  value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;')
+  value.replaceAll('&', '&amp;').replaceAll('<', '&lt;').replaceAll('>', '&gt;').replaceAll('$', '&#36;')
 
-const DANGEROUS_URL_SCHEME = /^\s*(?:javascript|data|vbscript):/i
+const SAFE_PROTOCOLS = new Set(['http:', 'https:', 'mailto:', 'tel:', 'sms:'])
 
-// snarkdown does not sanitize link/image URLs, so neutralize dangerous schemes in the
-// generated markup before it is rendered.
-const sanitizeMarkdownHTML = (markup: string) =>
-  markup.replace(/(\b(?:href|src)=)(["'])(.*?)\2/gi, (match, attr, quote, url) =>
-    DANGEROUS_URL_SCHEME.test(url) ? `${attr}${quote}#${quote}` : match,
-  )
+const isSafeURL = (url: string) => {
+  try {
+    return SAFE_PROTOCOLS.has(new URL(url, document.baseURI).protocol)
+  } catch {
+    return false
+  }
+}
+
+// snarkdown doesn't sanitize URLs. Checked on the parsed DOM, so text that imitates an attribute can't hide one.
+const sanitizeMarkdownHTML = (markup: string) => {
+  const doc = new DOMParser().parseFromString(markup, 'text/html')
+  for (const el of doc.querySelectorAll('[href], [src]')) {
+    for (const name of ['href', 'src']) {
+      const url = el.getAttribute(name)
+      if (url !== null && !isSafeURL(url)) el.removeAttribute(name)
+    }
+  }
+  return doc.body.innerHTML
+}
+
+export const renderMarkdownTileHTML = (body: string) => sanitizeMarkdownHTML(snarkdown(escapeMarkdownHTML(body)))
 
 const NO_FILTERS: readonly ActiveFilter[] = []
 
@@ -97,7 +113,7 @@ export const TileShell = ({
 export const DashboardMarkdownTile = ({ tile, editing, onPatch }: TileContentProps) => {
   if (tile.content.case !== 'markdown') return null
 
-  const html = sanitizeMarkdownHTML(snarkdown(escapeMarkdownHTML(tile.content.value.body)))
+  const html = renderMarkdownTileHTML(tile.content.value.body)
 
   return (
     <TileShell tile={tile} editing={editing} onPatch={onPatch}>

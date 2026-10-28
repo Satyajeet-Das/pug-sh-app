@@ -7,7 +7,7 @@ const pendingProviderKey = 'pug.oidc.pending-provider'
 const pendingConnectionKey = 'pug.oidc.pending-connection'
 const pendingInviteKey = 'pug.oidc.pending-invite'
 
-// Keyed on the issuer, not the id — the id is operator-chosen and can be anything.
+// Keyed on the issuer, not the id: the id is operator-chosen and can be anything.
 export const isGoogleProvider = (provider: AuthProviderConfig) =>
   provider.issuerUrl.startsWith('https://accounts.google.com')
 
@@ -38,11 +38,31 @@ const settingsFor = (provider: AuthProviderConfig): UserManagerSettings => ({
   scope: provider.scopes.join(' '),
   loadUserInfo: false,
   automaticSilentRenew: false,
+  requestTimeoutInSeconds: 10,
   stateStore: new WebStorageStateStore({ store: window.sessionStorage, prefix: 'pug.oidc.state.' }),
 })
 
 const managerFor = (provider: AuthProviderConfig) => new UserManager(settingsFor(provider))
 const clientFor = (provider: AuthProviderConfig) => new OidcClient(settingsFor(provider))
+
+export class UnsafeProviderError extends Error {}
+
+// The issuer's host controls this URL, and a javascript: one would run here. Read through the
+// manager's cache, so signinRedirect navigates to exactly the value checked.
+const assertSafeAuthorizationEndpoint = async (manager: UserManager) => {
+  const endpoint = await manager.metadataService.getAuthorizationEndpoint()
+  let url: URL
+  try {
+    url = new URL(endpoint)
+  } catch {
+    throw new UnsafeProviderError(`The identity provider advertised an unreadable authorization endpoint: ${endpoint}`)
+  }
+  const localhost = ['localhost', '127.0.0.1', '[::1]'].includes(url.hostname)
+  const secure = url.protocol === 'https:' || (url.protocol === 'http:' && localhost)
+  if (!secure) {
+    throw new UnsafeProviderError(`The identity provider advertised a non-https authorization endpoint: ${endpoint}`)
+  }
+}
 
 export const startOIDCSignIn = async (
   provider: AuthProviderConfig,
@@ -61,6 +81,7 @@ export const startOIDCSignIn = async (
   try {
     const manager = managerFor(provider)
     await manager.clearStaleState()
+    await assertSafeAuthorizationEndpoint(manager)
     await manager.signinRedirect({
       nonce: crypto.randomUUID(),
       login_hint: loginHint,
