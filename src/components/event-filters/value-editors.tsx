@@ -1,5 +1,5 @@
 import { Check, X } from 'lucide-react'
-import { useMemo, useRef, useState } from 'react'
+import { useId, useMemo, useRef, useState } from 'react'
 import { CountryFlag } from '@/components/country-flag'
 import { Button } from '@/components/ui/button'
 import {
@@ -217,9 +217,10 @@ export const MultiValueEditor = ({
   )
 }
 
-// Live while typing, so polite: an alert would interrupt on every keystroke that flips it.
-const FieldHint = ({ children }: { children: string }) => (
-  <p role="status" className="mt-1.5 text-xs text-negative">
+// Live while typing, so polite: an alert would interrupt on every keystroke that flips it. The id is what
+// the input's aria-describedby points at, so the message is read with the field and not only announced.
+const FieldHint = ({ id, children }: { id: string; children: string }) => (
+  <p id={id} role="status" className="mt-1.5 text-xs text-negative">
     {children}
   </p>
 )
@@ -251,6 +252,7 @@ export const SingleValueEditor = ({
   footer?: React.ReactNode
 }) => {
   const [typed, setTyped] = useState('')
+  const hintId = useId()
   // `value` is the stored code; the input keeps what was typed while it still means that code, and
   // otherwise names the code only if the name resolves back to it (a $locale name never does).
   const label = propertyValueLabel(property, value)
@@ -271,10 +273,11 @@ export const SingleValueEditor = ({
             if (e.key === 'Enter') onCommit()
           }}
           aria-invalid={hint !== undefined}
+          aria-describedby={hint ? hintId : undefined}
           className={cn(filterInputCls, 'w-full', labelsPropertyValues(property) && 'font-sans')}
           autoFocus
         />
-        {hint && <FieldHint>{hint}</FieldHint>}
+        {hint && <FieldHint id={hintId}>{hint}</FieldHint>}
       </div>
       <ValueOptionList
         property={property}
@@ -312,6 +315,7 @@ export const BetweenValueEditor = ({
   footer?: React.ReactNode
 }) => {
   const maxRef = useRef<HTMLInputElement>(null)
+  const hintId = useId()
   return (
     <div>
       <div className="p-2 border-b border-border/60">
@@ -324,6 +328,7 @@ export const BetweenValueEditor = ({
               if (e.key === 'Enter') maxRef.current?.focus()
             }}
             aria-invalid={invalid?.min}
+            aria-describedby={hint ? hintId : undefined}
             className={cn(filterInputCls, 'flex-1 min-w-0')}
             autoFocus
           />
@@ -337,10 +342,11 @@ export const BetweenValueEditor = ({
               if (e.key === 'Enter') onCommit()
             }}
             aria-invalid={invalid?.max}
+            aria-describedby={hint ? hintId : undefined}
             className={cn(filterInputCls, 'flex-1 min-w-0')}
           />
         </div>
-        {hint && <FieldHint>{hint}</FieldHint>}
+        {hint && <FieldHint id={hintId}>{hint}</FieldHint>}
       </div>
       {footer}
     </div>
